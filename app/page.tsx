@@ -29,7 +29,11 @@ import {
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { FALLBACK_DASHBOARD_DATA, type DashboardData } from "./dashboard-types";
+import {
+  FALLBACK_DASHBOARD_DATA,
+  type DailyPerformancePoint,
+  type DashboardData,
+} from "./dashboard-types";
 
 type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "seller" | "quality";
 
@@ -133,6 +137,192 @@ function formatDate(value: string | null) {
   }
 
   return new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
+}
+
+type ChartMetricId = "grossAmount" | "ordersCount" | "unitsSold" | "visits";
+
+const chartMetrics: { id: ChartMetricId; label: string }[] = [
+  { id: "grossAmount", label: "Valor bruto" },
+  { id: "ordersCount", label: "Pedidos" },
+  { id: "unitsSold", label: "Unidades" },
+  { id: "visits", label: "Visitas" },
+];
+
+function formatChartValue(metric: ChartMetricId, value: number) {
+  return metric === "grossAmount" ? formatShortCurrency(value) : formatNumber(Math.round(value));
+}
+
+function dayIndex(date: string, firstDate: string) {
+  const current = new Date(`${date}T00:00:00Z`).getTime();
+  const first = new Date(`${firstDate}T00:00:00Z`).getTime();
+  return Math.round((current - first) / 86400000);
+}
+
+function alignDailyValues(
+  points: DailyPerformancePoint[],
+  firstDate: string | null,
+  periodDays: number,
+  metric: ChartMetricId,
+) {
+  const values: (number | null)[] = Array.from({ length: periodDays }, () => null);
+
+  if (!firstDate) {
+    return values;
+  }
+
+  for (const point of points) {
+    const index = dayIndex(point.date, firstDate);
+
+    if (index >= 0 && index < periodDays) {
+      values[index] = point[metric];
+    }
+  }
+
+  return values;
+}
+
+function buildChartPath(values: (number | null)[], maxValue: number) {
+  const left = 72;
+  const top = 20;
+  const width = 768;
+  const height = 204;
+  let path = "";
+  let drawing = false;
+
+  values.forEach((value, index) => {
+    if (value === null) {
+      drawing = false;
+      return;
+    }
+
+    const x = left + (index / Math.max(values.length - 1, 1)) * width;
+    const y = top + height - (value / maxValue) * height;
+    path += `${drawing ? " L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
+    drawing = true;
+  });
+
+  return path;
+}
+
+function PeriodComparisonChart({ data }: { data: DashboardData }) {
+  const [metric, setMetric] = useState<ChartMetricId>("grossAmount");
+  const current = alignDailyValues(
+    data.dailyPerformance.current,
+    data.dailyPerformance.currentFirstDate,
+    data.periodDays,
+    metric,
+  );
+  const previous = alignDailyValues(
+    data.dailyPerformance.previous,
+    data.dailyPerformance.previousFirstDate,
+    data.periodDays,
+    metric,
+  );
+  const populatedValues = [...current, ...previous].filter((value): value is number => value !== null);
+  const maxValue = Math.max(...populatedValues, 0) || 1;
+  const chart = {
+    current,
+    previous,
+    currentPath: buildChartPath(current, maxValue),
+    previousPath: buildChartPath(previous, maxValue),
+    maxValue,
+    hasData: populatedValues.length > 0,
+  };
+
+  return (
+    <section className="panel trend-panel">
+      <PanelTitle
+        title="Evolução diária: atual vs. anterior"
+        subtitle="As duas linhas usam dias equivalentes dentro de janelas consecutivas, sem sobreposição."
+        action={
+          <div className="chart-tabs" aria-label="Métrica do gráfico">
+            {chartMetrics.map((item) => (
+              <button
+                key={item.id}
+                className={metric === item.id ? "active" : ""}
+                aria-pressed={metric === item.id}
+                onClick={() => setMetric(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        }
+      />
+
+      {chart.hasData ? (
+        <>
+          <div className="chart-legend">
+            <span>
+              <i className="chart-line current" /> Atual: {formatDate(data.dailyPerformance.currentFirstDate)} a {formatDate(data.dailyPerformance.currentLastDate)}
+            </span>
+            <span>
+              <i className="chart-line previous" /> Anterior: {formatDate(data.dailyPerformance.previousFirstDate)} a {formatDate(data.dailyPerformance.previousLastDate)}
+            </span>
+          </div>
+          <div className="chart-wrap">
+            <svg
+              className="comparison-chart"
+              viewBox="0 0 860 260"
+              role="img"
+              aria-label={`Evolução diária de ${chartMetrics.find((item) => item.id === metric)?.label.toLowerCase()}, comparando período atual e anterior`}
+            >
+            {[20, 122, 224].map((y) => (
+              <line key={y} className="chart-grid-line" x1="72" x2="840" y1={y} y2={y} />
+            ))}
+            <text className="chart-axis-text" x="62" y="24" textAnchor="end">
+              {formatChartValue(metric, chart.maxValue)}
+            </text>
+            <text className="chart-axis-text" x="62" y="126" textAnchor="end">
+              {formatChartValue(metric, chart.maxValue / 2)}
+            </text>
+            <text className="chart-axis-text" x="62" y="228" textAnchor="end">0</text>
+            <text className="chart-axis-text" x="72" y="252">Dia 1</text>
+            <text className="chart-axis-text" x="456" y="252" textAnchor="middle">
+              Dia {Math.ceil(data.periodDays / 2)}
+            </text>
+            <text className="chart-axis-text" x="840" y="252" textAnchor="end">
+              Dia {data.periodDays}
+            </text>
+            <path className="trend-line previous" d={chart.previousPath} />
+            <path className="trend-line current" d={chart.currentPath} />
+            {chart.current.map((value, index) =>
+              value === null || data.periodDays > 30 ? null : (
+                <circle
+                  key={`current-${index}`}
+                  className="chart-point current"
+                  cx={72 + (index / Math.max(data.periodDays - 1, 1)) * 768}
+                  cy={20 + 204 - (value / chart.maxValue) * 204}
+                  r="2.8"
+                >
+                  <title>Atual, dia {index + 1}: {formatChartValue(metric, value)}</title>
+                </circle>
+              ),
+            )}
+            {chart.previous.map((value, index) =>
+              value === null || data.periodDays > 30 ? null : (
+                <circle
+                  key={`previous-${index}`}
+                  className="chart-point previous"
+                  cx={72 + (index / Math.max(data.periodDays - 1, 1)) * 768}
+                  cy={20 + 204 - (value / chart.maxValue) * 204}
+                  r="2.8"
+                >
+                  <title>Anterior, dia {index + 1}: {formatChartValue(metric, value)}</title>
+                </circle>
+              ),
+            )}
+            </svg>
+          </div>
+        </>
+      ) : (
+        <div className="chart-empty-state">
+          <BarChart3 size={22} />
+          <span>{data.connected ? "Não há pontos diários neste recorte." : "O gráfico será exibido após a conexão com o Supabase."}</span>
+        </div>
+      )}
+    </section>
+  );
 }
 
 type ComparisonMetric = {
@@ -310,6 +500,8 @@ function OverviewView({ data }: { data: DashboardData }) {
         />
       </section>
 
+      <PeriodComparisonChart data={data} />
+
       <section className="content-grid two-one">
         <article className="panel coverage-panel">
           <PanelTitle
@@ -454,6 +646,9 @@ function SalesView({ data }: { data: DashboardData }) {
           }}
         />
       </section>
+
+      <PeriodComparisonChart data={data} />
+
       <section className="content-grid equal">
         <article className="panel">
           <PanelTitle title="Dimensão do período" subtitle="Escala dos registros carregados para a análise" />
@@ -493,19 +688,19 @@ function SalesView({ data }: { data: DashboardData }) {
             <div>
               <span>01</span>
               <p>
-                <strong>Vendas leem o catálogo completo.</strong> Receita, unidades e tendência consideram todos os anúncios vendidos.
+                <strong>Conversão = pedidos ÷ visitas.</strong> Mede a parcela de visitas que resultou em um pedido.
               </p>
             </div>
             <div>
               <span>02</span>
               <p>
-                <strong>Operação usa os atributos disponíveis.</strong> Estoque, preço ativo e status aparecem quando informados pela API.
+                <strong>Ticket médio = valor bruto ÷ pedidos.</strong> Mostra o valor médio movimentado por pedido.
               </p>
             </div>
             <div>
               <span>03</span>
               <p>
-                <strong>Origem é uma etiqueta técnica.</strong> Ela fica restrita à auditoria e não fragmenta a leitura comercial.
+                <strong>Unidades por pedido = unidades ÷ pedidos.</strong> Indica a quantidade média de itens em cada pedido.
               </p>
             </div>
           </div>
@@ -642,7 +837,7 @@ function PerformanceView({ data }: { data: DashboardData }) {
         <KpiCard
           label="Conversão"
           value={formatPercent(data.sales.conversionRatePercent)}
-          detail="Taxa calculada por anúncio"
+          detail="Pedidos divididos por visitas"
           icon={Gauge}
           tone="good"
           comparison={{
