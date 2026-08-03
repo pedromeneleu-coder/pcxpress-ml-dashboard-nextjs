@@ -1,6 +1,7 @@
 import {
   FALLBACK_DASHBOARD_DATA,
   type CatalogRow,
+  type DailyPerformancePoint,
   type DashboardData,
   type TopProduct,
 } from "@/app/dashboard-types";
@@ -259,10 +260,11 @@ function buildSales(records: AccountSummaryRecord[]): DashboardData["sales"] {
   );
 
   const dates = records.map((record) => record.performance_date).sort();
-  const conversionRatePercent = totals.visits > 0 ? (totals.unitsSold / totals.visits) * 100 : null;
+  const hasVisits = records.some((record) => toNullableNumber(record.visits) !== null);
+  const conversionRatePercent = totals.visits > 0 ? (totals.ordersCount / totals.visits) * 100 : null;
 
   return {
-    visits: totals.visits,
+    visits: hasVisits ? totals.visits : null,
     unitsSold: totals.unitsSold,
     ordersCount: totals.ordersCount,
     grossAmount: totals.grossAmount,
@@ -274,6 +276,28 @@ function buildSales(records: AccountSummaryRecord[]): DashboardData["sales"] {
     firstPerformanceDate: dates[0] ?? null,
     lastPerformanceDate: dates.at(-1) ?? null,
   };
+}
+
+function buildDailyPerformance(records: AccountSummaryRecord[]): DailyPerformancePoint[] {
+  return records
+    .map((record) => {
+      const visits = toNullableNumber(record.visits);
+      const unitsSold = toNumber(record.units_sold);
+      const ordersCount = toNumber(record.orders_count);
+      const grossAmount = toNumber(record.gross_amount);
+
+      return {
+        date: record.performance_date,
+        visits,
+        unitsSold,
+        ordersCount,
+        grossAmount,
+        avgTicket: ordersCount > 0 ? grossAmount / ordersCount : null,
+        unitsPerOrder: ordersCount > 0 ? unitsSold / ordersCount : null,
+        conversionRatePercent: visits && visits > 0 ? (ordersCount / visits) * 100 : null,
+      };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function buildTopProducts(records: ItemPerformanceRecord[]): TopProduct[] {
@@ -304,7 +328,7 @@ function buildTopProducts(records: ItemPerformanceRecord[]): TopProduct[] {
     current.ordersCount += toNumber(record.orders_count);
     current.grossAmount += toNumber(record.gross_amount);
     current.conversionRatePercent =
-      current.visits > 0 ? (current.unitsSold / current.visits) * 100 : toNullableNumber(record.conversion_rate_percent);
+      current.visits > 0 ? (current.ordersCount / current.visits) * 100 : null;
 
     byItem.set(record.item_id, current);
   }
@@ -397,6 +421,14 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
         firstDate: previousFirstDate,
         lastDate: previousLastDate,
         sales: previousSummaryRecords.length ? buildSales(previousSummaryRecords) : null,
+      },
+      dailyPerformance: {
+        currentFirstDate: fromDate,
+        currentLastDate: anchorDate,
+        previousFirstDate,
+        previousLastDate,
+        current: buildDailyPerformance(currentSummaryRecords),
+        previous: buildDailyPerformance(previousSummaryRecords),
       },
       topProducts: buildTopProducts(performanceRecords),
     };
