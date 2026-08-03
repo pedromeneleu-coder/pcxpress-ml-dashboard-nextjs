@@ -53,6 +53,7 @@ type SupabaseConfig = {
 };
 
 const DEFAULT_ACCOUNT_NAME = "PC Express";
+const DISPLAY_ACCOUNT_NAME = "PCXpress";
 const DEFAULT_SCHEMA = "ml_dashboards";
 const PAGE_SIZE = 1000;
 const REQUEST_TIMEOUT_MS = 15000;
@@ -192,15 +193,15 @@ function buildCatalog(records: CatalogRecord[]): DashboardData["catalog"] {
 
   const rows: CatalogRow[] = [
     {
-      source: "Catalogo operacional",
+      source: "Catálogo operacional",
       status: "Atualizado pela API",
       count: current,
       share: share(current, total),
       tone: "good",
     },
     {
-      source: "Catalogo preservado",
-      status: "Mantido para analise",
+      source: "Catálogo preservado",
+      status: "Mantido para análise",
       count: retained,
       share: share(retained, total),
       tone: "warning",
@@ -210,7 +211,7 @@ function buildCatalog(records: CatalogRecord[]): DashboardData["catalog"] {
   if (unknown > 0) {
     rows.push({
       source: "Origem pendente",
-      status: "Revisar classificacao",
+      status: "Revisar classificação",
       count: unknown,
       share: share(unknown, total),
       tone: "neutral",
@@ -321,7 +322,7 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
       return {
         ...FALLBACK_DASHBOARD_DATA,
         periodDays,
-        message: `Conta "${config.accountName}" nao encontrada no Supabase.`,
+        message: `Conta "${config.accountName}" não encontrada no Supabase.`,
       };
     }
 
@@ -376,7 +377,7 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
       source: "supabase",
       connected: true,
       message: null,
-      accountName: account.account_name ?? config.accountName,
+      accountName: DISPLAY_ACCOUNT_NAME,
       periodDays,
       updatedAt: timestamps.at(-1) ?? null,
       catalog: buildCatalog(catalogRecords),
