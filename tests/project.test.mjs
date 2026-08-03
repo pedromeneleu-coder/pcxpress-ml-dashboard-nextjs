@@ -42,3 +42,20 @@ test("compares each selected window with the immediately previous window", async
   assert.match(dataSource, /and: combinedPeriodFilter/);
   assert.match(page, /vs\. período anterior/);
 });
+
+test("uses commercial formulas consistently and exposes both daily series", async () => {
+  const [dataSource, types, page, readme] = await Promise.all([
+    readFile(new URL("lib/supabase-dashboard.ts", root), "utf8"),
+    readFile(new URL("app/dashboard-types.ts", root), "utf8"),
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("README.md", root), "utf8"),
+  ]);
+
+  assert.match(dataSource, /totals\.ordersCount \/ totals\.visits/);
+  assert.doesNotMatch(dataSource, /totals\.unitsSold \/ totals\.visits/);
+  assert.match(dataSource, /current: buildDailyPerformance\(currentSummaryRecords\)/);
+  assert.match(dataSource, /previous: buildDailyPerformance\(previousSummaryRecords\)/);
+  assert.match(types, /export type DailyPerformancePoint/);
+  assert.match(page, /Evolução diária: atual vs\. anterior/);
+  assert.match(readme, /Conversão:\*\* `pedidos \/ visitas \* 100`/);
+});
