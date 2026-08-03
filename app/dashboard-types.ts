@@ -58,8 +58,8 @@ export type DashboardData = {
 export const FALLBACK_DASHBOARD_DATA: DashboardData = {
   source: "fallback",
   connected: false,
-  message: "Aguardando variaveis do Supabase.",
-  accountName: "PC Express",
+  message: "Aguardando variáveis do Supabase.",
+  accountName: "PCXpress",
   periodDays: 30,
   updatedAt: null,
   catalog: {
@@ -71,15 +71,15 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
     retainedShare: 37.2,
     rows: [
       {
-        source: "Catalogo operacional",
+        source: "Catálogo operacional",
         status: "Atualizado pela API",
         count: 174,
         share: "62,8%",
         tone: "good",
       },
       {
-        source: "Catalogo preservado",
-        status: "Mantido para analise",
+        source: "Catálogo preservado",
+        status: "Mantido para análise",
         count: 103,
         share: "37,2%",
         tone: "warning",
