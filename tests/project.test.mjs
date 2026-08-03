@@ -30,3 +30,15 @@ test("does not require legacy Vercel function routing", async () => {
   const packageJson = await readFile(new URL("package.json", root), "utf8");
   assert.doesNotMatch(packageJson, /vinext|vite|wrangler|@vercel\/node/);
 });
+
+test("compares each selected window with the immediately previous window", async () => {
+  const [dataSource, page] = await Promise.all([
+    readFile(new URL("lib/supabase-dashboard.ts", root), "utf8"),
+    readFile(new URL("app/page.tsx", root), "utf8"),
+  ]);
+
+  assert.match(dataSource, /const previousLastDate = shiftDate\(fromDate, -1\)/);
+  assert.match(dataSource, /const previousFirstDate = startDateForPeriod\(previousLastDate, periodDays\)/);
+  assert.match(dataSource, /and: combinedPeriodFilter/);
+  assert.match(page, /vs\. período anterior/);
+});
