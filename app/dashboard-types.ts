@@ -23,6 +23,20 @@ export type TopProduct = {
   permalink: string | null;
 };
 
+export type SalesSummary = {
+  visits: number | null;
+  unitsSold: number;
+  ordersCount: number;
+  grossAmount: number;
+  paidGrossAmount: number | null;
+  avgTicket: number | null;
+  conversionRatePercent: number | null;
+  itemsCount: number | null;
+  fallbackItemsCount: number | null;
+  firstPerformanceDate: string | null;
+  lastPerformanceDate: string | null;
+};
+
 export type DashboardData = {
   source: "supabase" | "fallback";
   connected: boolean;
@@ -39,18 +53,11 @@ export type DashboardData = {
     retainedShare: number;
     rows: CatalogRow[];
   };
-  sales: {
-    visits: number | null;
-    unitsSold: number;
-    ordersCount: number;
-    grossAmount: number;
-    paidGrossAmount: number | null;
-    avgTicket: number | null;
-    conversionRatePercent: number | null;
-    itemsCount: number | null;
-    fallbackItemsCount: number | null;
-    firstPerformanceDate: string | null;
-    lastPerformanceDate: string | null;
+  sales: SalesSummary;
+  comparison: {
+    firstDate: string | null;
+    lastDate: string | null;
+    sales: SalesSummary | null;
   };
   topProducts: TopProduct[];
 };
@@ -98,6 +105,11 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
     fallbackItemsCount: 103,
     firstPerformanceDate: null,
     lastPerformanceDate: "2026-02-25",
+  },
+  comparison: {
+    firstDate: null,
+    lastDate: null,
+    sales: null,
   },
   topProducts: [],
 };
