@@ -4,6 +4,8 @@ import Image from "next/image";
 import {
   Activity,
   AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
   BarChart3,
   Box,
   CalendarDays,
@@ -15,6 +17,7 @@ import {
   Gauge,
   LayoutDashboard,
   Menu,
+  Minus,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -132,18 +135,64 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 }
 
+type ComparisonMetric = {
+  current: number | null;
+  previous: number | null;
+  periodDays: number;
+};
+
+function ComparisonIndicator({ current, previous, periodDays, compact = false }: ComparisonMetric & { compact?: boolean }) {
+  if (current === null || previous === null) {
+    return (
+      <span className={`comparison-indicator comparison-neutral${compact ? " comparison-compact" : ""}`}>
+        <Minus size={13} /> Sem base anterior
+      </span>
+    );
+  }
+
+  if (previous === 0) {
+    const hasGrowth = current > 0;
+
+    return (
+      <span className={`comparison-indicator comparison-${hasGrowth ? "up" : "neutral"}${compact ? " comparison-compact" : ""}`}>
+        {hasGrowth ? <ArrowUpRight size={13} /> : <Minus size={13} />}
+        {hasGrowth ? "Novo vs. período anterior" : "Sem variação vs. período anterior"}
+      </span>
+    );
+  }
+
+  const changePercent = ((current - previous) / Math.abs(previous)) * 100;
+  const direction = changePercent > 0 ? "up" : changePercent < 0 ? "down" : "neutral";
+  const Icon = direction === "up" ? ArrowUpRight : direction === "down" ? ArrowDownRight : Minus;
+  const formattedChange = Math.abs(changePercent).toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+
+  return (
+    <span
+      className={`comparison-indicator comparison-${direction}${compact ? " comparison-compact" : ""}`}
+      title={`Comparação com os ${periodDays} dias anteriores`}
+    >
+      <Icon size={13} /> {formattedChange}% vs. período anterior
+    </span>
+  );
+}
+
 function KpiCard({
   label,
   value,
   detail,
   icon: Icon,
   tone = "neutral",
+  comparison,
 }: {
   label: string;
   value: string;
   detail: string;
   icon: typeof Activity;
   tone?: "neutral" | "good" | "warning" | "brand";
+  comparison?: ComparisonMetric;
 }) {
   return (
     <article className={`kpi-card kpi-${tone}`}>
@@ -155,6 +204,7 @@ function KpiCard({
       </div>
       <strong>{value}</strong>
       <small>{detail}</small>
+      {comparison ? <ComparisonIndicator {...comparison} /> : null}
     </article>
   );
 }
@@ -228,6 +278,11 @@ function OverviewView({ data }: { data: DashboardData }) {
           value={formatNumber(data.sales.ordersCount)}
           detail={`Janela de ${data.periodDays} dias`}
           icon={ShoppingBag}
+          comparison={{
+            current: data.sales.ordersCount,
+            previous: data.comparison.sales?.ordersCount ?? null,
+            periodDays: data.periodDays,
+          }}
         />
         <KpiCard
           label="Unidades vendidas"
@@ -235,6 +290,11 @@ function OverviewView({ data }: { data: DashboardData }) {
           detail="Vinculadas ao catálogo consolidado"
           icon={TrendingUp}
           tone="good"
+          comparison={{
+            current: data.sales.unitsSold,
+            previous: data.comparison.sales?.unitsSold ?? null,
+            periodDays: data.periodDays,
+          }}
         />
         <KpiCard
           label="Valor bruto"
@@ -242,6 +302,11 @@ function OverviewView({ data }: { data: DashboardData }) {
           detail={data.connected ? "Período selecionado" : "Snapshot validado"}
           icon={CircleDollarSign}
           tone="warning"
+          comparison={{
+            current: data.sales.grossAmount,
+            previous: data.comparison.sales?.grossAmount ?? null,
+            periodDays: data.periodDays,
+          }}
         />
       </section>
 
@@ -340,8 +405,29 @@ function SalesView({ data }: { data: DashboardData }) {
         <span>Última data: {formatDate(data.sales.lastPerformanceDate)}</span>
       </div>
       <section className="kpi-grid">
-        <KpiCard label="Valor bruto" value={formatCurrency(data.sales.grossAmount)} detail="Período selecionado" icon={CircleDollarSign} tone="brand" />
-        <KpiCard label="Pedidos" value={formatNumber(data.sales.ordersCount)} detail="Pedidos no recorte" icon={ShoppingBag} />
+        <KpiCard
+          label="Valor bruto"
+          value={formatCurrency(data.sales.grossAmount)}
+          detail="Período selecionado"
+          icon={CircleDollarSign}
+          tone="brand"
+          comparison={{
+            current: data.sales.grossAmount,
+            previous: data.comparison.sales?.grossAmount ?? null,
+            periodDays: data.periodDays,
+          }}
+        />
+        <KpiCard
+          label="Pedidos"
+          value={formatNumber(data.sales.ordersCount)}
+          detail="Pedidos no recorte"
+          icon={ShoppingBag}
+          comparison={{
+            current: data.sales.ordersCount,
+            previous: data.comparison.sales?.ordersCount ?? null,
+            periodDays: data.periodDays,
+          }}
+        />
         <KpiCard
           label="Unidades"
           value={formatNumber(data.sales.unitsSold)}
@@ -350,12 +436,22 @@ function SalesView({ data }: { data: DashboardData }) {
           })} unidade por pedido`}
           icon={Box}
           tone="good"
+          comparison={{
+            current: data.sales.unitsSold,
+            previous: data.comparison.sales?.unitsSold ?? null,
+            periodDays: data.periodDays,
+          }}
         />
         <KpiCard
           label="Média por pedido"
           value={data.sales.avgTicket === null ? "Após conexão" : formatCurrency(data.sales.avgTicket)}
           detail="Valor bruto dividido por pedidos"
           icon={Gauge}
+          comparison={{
+            current: data.sales.avgTicket,
+            previous: data.comparison.sales?.avgTicket ?? null,
+            periodDays: data.periodDays,
+          }}
         />
       </section>
       <section className="content-grid equal">
@@ -392,7 +488,7 @@ function SalesView({ data }: { data: DashboardData }) {
           </div>
         </article>
         <article className="panel">
-          <PanelTitle title="Regras de leitura" subtitle="Como os numeros devem ser interpretados" />
+          <PanelTitle title="Regras de leitura" subtitle="Como os números devem ser interpretados" />
           <div className="rule-list">
             <div>
               <span>01</span>
@@ -425,7 +521,18 @@ function ProductsView({ data }: { data: DashboardData }) {
       <section className="kpi-grid">
         <KpiCard label="Catálogo total" value={formatNumber(data.catalog.total)} detail="Sem duplicidade entre fontes" icon={Box} tone="brand" />
         <KpiCard label="Com dados operacionais" value={formatNumber(data.catalog.current)} detail="Preço, estoque e status disponíveis" icon={ShoppingBag} />
-        <KpiCard label="Unidades vendidas" value={formatNumber(data.sales.unitsSold)} detail={`Janela de ${data.periodDays} dias`} icon={TrendingUp} tone="warning" />
+        <KpiCard
+          label="Unidades vendidas"
+          value={formatNumber(data.sales.unitsSold)}
+          detail={`Janela de ${data.periodDays} dias`}
+          icon={TrendingUp}
+          tone="warning"
+          comparison={{
+            current: data.sales.unitsSold,
+            previous: data.comparison.sales?.unitsSold ?? null,
+            periodDays: data.periodDays,
+          }}
+        />
         <KpiCard
           label="Cobertura classificada"
           value={data.catalog.unknown === 0 ? "100%" : `${formatNumber(data.catalog.unknown)} pend.`}
@@ -457,7 +564,7 @@ function ProductsView({ data }: { data: DashboardData }) {
                 <Activity size={18} />
               </span>
               <p>
-                <strong>Anuncio pausado com estoque</strong>
+                <strong>Anúncio pausado com estoque</strong>
                 <small>Identificar receita potencial bloqueada.</small>
               </p>
               <b>{data.connected ? "Ativo" : "Após conexão"}</b>
@@ -520,9 +627,30 @@ function PerformanceView({ data }: { data: DashboardData }) {
       </section>
       <section className="kpi-grid">
         <KpiCard label="Janela de pedidos" value={`${data.periodDays} dias`} detail="Atualização móvel" icon={CalendarDays} tone="brand" />
-        <KpiCard label="Visitas" value={data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)} detail="Detalhamento diário" icon={Eye} />
+        <KpiCard
+          label="Visitas"
+          value={data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}
+          detail="Detalhamento diário"
+          icon={Eye}
+          comparison={{
+            current: data.sales.visits,
+            previous: data.comparison.sales?.visits ?? null,
+            periodDays: data.periodDays,
+          }}
+        />
         <KpiCard label="Grão analítico" value="Item + dia" detail="Comparação no mesmo nível" icon={Database} />
-        <KpiCard label="Conversão" value={formatPercent(data.sales.conversionRatePercent)} detail="Taxa calculada por anúncio" icon={Gauge} tone="good" />
+        <KpiCard
+          label="Conversão"
+          value={formatPercent(data.sales.conversionRatePercent)}
+          detail="Taxa calculada por anúncio"
+          icon={Gauge}
+          tone="good"
+          comparison={{
+            current: data.sales.conversionRatePercent,
+            previous: data.comparison.sales?.conversionRatePercent ?? null,
+            periodDays: data.periodDays,
+          }}
+        />
       </section>
       <section className="panel table-panel">
         <PanelTitle
@@ -591,8 +719,8 @@ function PerformanceView({ data }: { data: DashboardData }) {
                   </tr>
                   <tr>
                     <td className="primary-cell">Sem visita + sem venda</td>
-                    <td>Anuncio sem tracao</td>
-                    <td>Reavaliar permanencia e cadastro</td>
+                    <td>Anúncio sem tração</td>
+                    <td>Reavaliar permanência e cadastro</td>
                     <td>
                       <span className="status-badge status-neutral">Média</span>
                     </td>
@@ -628,15 +756,39 @@ function TrafficView({ data }: { data: DashboardData }) {
           <div className="funnel">
             <div style={{ width: "100%" }}>
               <span>Visitas</span>
-              <b>{data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}</b>
+              <div className="funnel-value">
+                <b>{data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}</b>
+                <ComparisonIndicator
+                  current={data.sales.visits}
+                  previous={data.comparison.sales?.visits ?? null}
+                  periodDays={data.periodDays}
+                  compact
+                />
+              </div>
             </div>
             <div style={{ width: "78%" }}>
               <span>Pedidos</span>
-              <b>{formatNumber(data.sales.ordersCount)}</b>
+              <div className="funnel-value">
+                <b>{formatNumber(data.sales.ordersCount)}</b>
+                <ComparisonIndicator
+                  current={data.sales.ordersCount}
+                  previous={data.comparison.sales?.ordersCount ?? null}
+                  periodDays={data.periodDays}
+                  compact
+                />
+              </div>
             </div>
             <div style={{ width: "56%" }}>
               <span>Unidades vendidas</span>
-              <b>{formatNumber(data.sales.unitsSold)}</b>
+              <div className="funnel-value">
+                <b>{formatNumber(data.sales.unitsSold)}</b>
+                <ComparisonIndicator
+                  current={data.sales.unitsSold}
+                  previous={data.comparison.sales?.unitsSold ?? null}
+                  periodDays={data.periodDays}
+                  compact
+                />
+              </div>
             </div>
           </div>
         </article>
@@ -899,7 +1051,7 @@ export default function Home() {
             <div className="date-chip">
               <CalendarDays size={16} />
               <span>
-                Janela selecionada: <strong>{periodDays} dias</strong>
+                Período atual vs. <strong>{periodDays} dias anteriores</strong>
               </span>
             </div>
           </div>
