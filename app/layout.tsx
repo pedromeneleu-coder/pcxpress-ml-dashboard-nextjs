@@ -3,12 +3,12 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://pcxpress-ml-dashboard.vercel.app"),
-  title: "PC Xpress | Mercado Livre Analytics",
-  description: "Dashboard comercial e operacional da PC Xpress para o Mercado Livre.",
+  title: "PCXpress | Mercado Livre Analytics",
+  description: "Dashboard comercial e operacional da PCXpress para o Mercado Livre.",
   icons: { icon: "/pcxpress-logo.webp" },
   openGraph: {
-    title: "PC Xpress | Mercado Livre Analytics",
-    description: "Dashboard comercial e operacional da PC Xpress para o Mercado Livre.",
+    title: "PCXpress | Mercado Livre Analytics",
+    description: "Dashboard comercial e operacional da PCXpress para o Mercado Livre.",
     images: ["/og.png"],
   },
 };
