@@ -98,6 +98,12 @@ function startDateForPeriod(anchorDate: string, periodDays: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+function shiftDate(dateValue: string, days: number): string {
+  const date = new Date(`${dateValue}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function share(count: number, total: number): string {
   if (!total) {
     return "0,0%";
@@ -338,6 +344,9 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
     );
     const anchorDate = latestSummary[0]?.performance_date ?? new Date().toISOString().slice(0, 10);
     const fromDate = startDateForPeriod(anchorDate, periodDays);
+    const previousLastDate = shiftDate(fromDate, -1);
+    const previousFirstDate = startDateForPeriod(previousLastDate, periodDays);
+    const combinedPeriodFilter = `(performance_date.gte.${previousFirstDate},performance_date.lte.${anchorDate})`;
     const periodFilter = `(performance_date.gte.${fromDate},performance_date.lte.${anchorDate})`;
     const [catalogRecords, summaryRecords, performanceRecords] = await Promise.all([
       fetchAll<CatalogRecord>(
@@ -353,7 +362,7 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
           select:
             "performance_date,items_count,fallback_items_count,visits,units_sold,orders_count,gross_amount,paid_gross_amount,avg_ticket,conversion_rate_percent",
           account_id: accountFilter,
-          and: periodFilter,
+          and: combinedPeriodFilter,
           order: "performance_date.asc",
         }),
       ),
@@ -372,6 +381,8 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
       .flatMap((record) => [record.synced_at, record.last_updated])
       .filter((value): value is string => Boolean(value))
       .sort();
+    const currentSummaryRecords = summaryRecords.filter((record) => record.performance_date >= fromDate);
+    const previousSummaryRecords = summaryRecords.filter((record) => record.performance_date < fromDate);
 
     return {
       source: "supabase",
@@ -381,7 +392,12 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
       periodDays,
       updatedAt: timestamps.at(-1) ?? null,
       catalog: buildCatalog(catalogRecords),
-      sales: buildSales(summaryRecords),
+      sales: buildSales(currentSummaryRecords),
+      comparison: {
+        firstDate: previousFirstDate,
+        lastDate: previousLastDate,
+        sales: previousSummaryRecords.length ? buildSales(previousSummaryRecords) : null,
+      },
       topProducts: buildTopProducts(performanceRecords),
     };
   } catch (error) {
