@@ -101,7 +101,7 @@ button { letter-spacing: 0; }
 .date-chip strong { color: var(--ink); }
 
 .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; margin-bottom: 16px; }
-.kpi-card { background: white; border: 1px solid var(--line); border-radius: 7px; padding: 17px 18px 16px; min-height: 132px; position: relative; overflow: hidden; }
+.kpi-card { background: white; border: 1px solid var(--line); border-radius: 7px; padding: 17px 18px 16px; min-height: 154px; position: relative; overflow: hidden; }
 .kpi-card::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #dfe4e8; }
 .kpi-brand::after { background: var(--brand); }
 .kpi-good::after { background: var(--green); }
@@ -113,6 +113,11 @@ button { letter-spacing: 0; }
 .kpi-warning .icon-box { color: #a76c06; background: #fff7e8; }
 .kpi-card > strong { display: block; margin-top: 10px; font-size: 24px; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .kpi-card > small { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.comparison-indicator { width: fit-content; min-height: 20px; margin-top: 8px; padding: 3px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.comparison-up { color: #087b5d; background: #e9f8f3; }
+.comparison-down { color: #ad3434; background: #fcecec; }
+.comparison-neutral { color: #657078; background: #eef1f2; }
+.comparison-compact { min-height: auto; margin-top: 0; padding: 0; background: transparent; font-size: 8px; }
 
 .content-grid { display: grid; gap: 16px; margin-bottom: 16px; }
 .content-grid.two-one { grid-template-columns: minmax(0, 1.65fr) minmax(300px, .85fr); }
@@ -207,6 +212,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .funnel > div:nth-child(3) { background: #d5edf1; }
 .funnel span { font-size: 10px; font-weight: 800; }
 .funnel b { font-size: 9px; color: #5a6b71; }
+.funnel-value { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
 .question-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 14px; }
 .question-list li { display: flex; align-items: center; gap: 9px; font-size: 10px; color: #4f5c63; }
 .question-list svg { color: var(--green); flex: 0 0 auto; }
@@ -270,7 +276,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .page-content { padding: 20px 14px; }
   .page-title-row h1 { font-size: 23px; }
   .kpi-grid { grid-template-columns: 1fr; }
-  .kpi-card { min-height: 116px; }
+  .kpi-card { min-height: 138px; }
   .coverage-numbers { grid-template-columns: 1fr; gap: 12px; }
   .coverage-numbers div { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 10px; }
   .coverage-numbers div:last-child { border-bottom: 0; }
