@@ -37,6 +37,17 @@ export type SalesSummary = {
   lastPerformanceDate: string | null;
 };
 
+export type DailyPerformancePoint = {
+  date: string;
+  visits: number | null;
+  unitsSold: number;
+  ordersCount: number;
+  grossAmount: number;
+  avgTicket: number | null;
+  unitsPerOrder: number | null;
+  conversionRatePercent: number | null;
+};
+
 export type DashboardData = {
   source: "supabase" | "fallback";
   connected: boolean;
@@ -58,6 +69,14 @@ export type DashboardData = {
     firstDate: string | null;
     lastDate: string | null;
     sales: SalesSummary | null;
+  };
+  dailyPerformance: {
+    currentFirstDate: string | null;
+    currentLastDate: string | null;
+    previousFirstDate: string | null;
+    previousLastDate: string | null;
+    current: DailyPerformancePoint[];
+    previous: DailyPerformancePoint[];
   };
   topProducts: TopProduct[];
 };
@@ -110,6 +129,14 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
     firstDate: null,
     lastDate: null,
     sales: null,
+  },
+  dailyPerformance: {
+    currentFirstDate: null,
+    currentLastDate: null,
+    previousFirstDate: null,
+    previousLastDate: null,
+    current: [],
+    previous: [],
   },
   topProducts: [],
 };
