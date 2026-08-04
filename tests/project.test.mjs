@@ -59,3 +59,19 @@ test("uses commercial formulas consistently and exposes both daily series", asyn
   assert.match(page, /Evolução diária: atual vs\. anterior/);
   assert.match(readme, /Conversão:\*\* `pedidos \/ visitas \* 100`/);
 });
+
+test("compares products across both windows and renders interactive chart details", async () => {
+  const [dataSource, types, page] = await Promise.all([
+    readFile(new URL("lib/supabase-dashboard.ts", root), "utf8"),
+    readFile(new URL("app/dashboard-types.ts", root), "utf8"),
+    readFile(new URL("app/page.tsx", root), "utf8"),
+  ]);
+
+  assert.match(dataSource, /performance_date,item_id,title/);
+  assert.match(dataSource, /and: combinedPeriodFilter/);
+  assert.match(dataSource, /productComparisons: buildProductComparisons/);
+  assert.match(types, /export type ProductComparison/);
+  assert.match(page, /Comparação por produto/);
+  assert.match(page, /Vs\. período anterior/);
+  assert.match(page, /Vs\. dia anterior/);
+});
