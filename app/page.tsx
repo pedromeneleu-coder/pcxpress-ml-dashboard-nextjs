@@ -131,12 +131,49 @@ function formatPercent(value: number | null) {
   })}%`;
 }
 
+function formatTablePercent(value: number | null) {
+  return value === null ? "—" : formatPercent(value);
+}
+
 function formatDate(value: string | null) {
   if (!value) {
     return "Após conexão";
   }
 
   return new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
+}
+
+function shiftIsoDate(value: string | null, days: number) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function getChange(current: number | null | undefined, previous: number | null | undefined) {
+  if (current === null || current === undefined || previous === null || previous === undefined) {
+    return { label: "Sem base", direction: "neutral" as const };
+  }
+
+  if (previous === 0) {
+    return current > 0
+      ? { label: "Novo", direction: "up" as const }
+      : { label: "0,0%", direction: "neutral" as const };
+  }
+
+  const change = ((current - previous) / Math.abs(previous)) * 100;
+  const formatted = Math.abs(change).toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+
+  return {
+    label: `${change > 0 ? "+" : change < 0 ? "-" : ""}${formatted}%`,
+    direction: change > 0 ? "up" as const : change < 0 ? "down" as const : "neutral" as const,
+  };
 }
 
 type ChartMetricId = "grossAmount" | "ordersCount" | "unitsSold" | "visits";
@@ -206,6 +243,7 @@ function buildChartPath(values: (number | null)[], maxValue: number) {
 
 function PeriodComparisonChart({ data }: { data: DashboardData }) {
   const [metric, setMetric] = useState<ChartMetricId>("grossAmount");
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const current = alignDailyValues(
     data.dailyPerformance.current,
     data.dailyPerformance.currentFirstDate,
@@ -228,6 +266,15 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
     maxValue,
     hasData: populatedValues.length > 0,
   };
+  const hoveredCurrent = hoveredIndex === null ? null : chart.current[hoveredIndex];
+  const hoveredPrevious = hoveredIndex === null ? null : chart.previous[hoveredIndex];
+  const hoveredPriorDay = hoveredIndex === null || hoveredIndex === 0 ? null : chart.current[hoveredIndex - 1];
+  const hoveredX = hoveredIndex === null
+    ? 72
+    : 72 + (hoveredIndex / Math.max(data.periodDays - 1, 1)) * 768;
+  const tooltipX = hoveredX > 570 ? hoveredX - 258 : hoveredX + 10;
+  const periodChange = getChange(hoveredCurrent, hoveredPrevious);
+  const dayChange = getChange(hoveredCurrent, hoveredPriorDay);
 
   return (
     <section className="panel trend-panel">
@@ -241,7 +288,10 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
                 key={item.id}
                 className={metric === item.id ? "active" : ""}
                 aria-pressed={metric === item.id}
-                onClick={() => setMetric(item.id)}
+                onClick={() => {
+                  setMetric(item.id);
+                  setHoveredIndex(null);
+                }}
               >
                 {item.label}
               </button>
@@ -266,6 +316,7 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
               viewBox="0 0 860 260"
               role="img"
               aria-label={`Evolução diária de ${chartMetrics.find((item) => item.id === metric)?.label.toLowerCase()}, comparando período atual e anterior`}
+              onMouseLeave={() => setHoveredIndex(null)}
             >
             {[20, 122, 224].map((y) => (
               <line key={y} className="chart-grid-line" x1="72" x2="840" y1={y} y2={y} />
@@ -287,31 +338,81 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
             <path className="trend-line previous" d={chart.previousPath} />
             <path className="trend-line current" d={chart.currentPath} />
             {chart.current.map((value, index) =>
-              value === null || data.periodDays > 30 ? null : (
+              value === null ? null : (
                 <circle
                   key={`current-${index}`}
                   className="chart-point current"
                   cx={72 + (index / Math.max(data.periodDays - 1, 1)) * 768}
                   cy={20 + 204 - (value / chart.maxValue) * 204}
-                  r="2.8"
-                >
-                  <title>Atual, dia {index + 1}: {formatChartValue(metric, value)}</title>
-                </circle>
+                  r={data.periodDays > 30 ? 1.7 : 2.8}
+                />
               ),
             )}
             {chart.previous.map((value, index) =>
-              value === null || data.periodDays > 30 ? null : (
+              value === null ? null : (
                 <circle
                   key={`previous-${index}`}
                   className="chart-point previous"
                   cx={72 + (index / Math.max(data.periodDays - 1, 1)) * 768}
                   cy={20 + 204 - (value / chart.maxValue) * 204}
-                  r="2.8"
-                >
-                  <title>Anterior, dia {index + 1}: {formatChartValue(metric, value)}</title>
-                </circle>
+                  r={data.periodDays > 30 ? 1.7 : 2.8}
+                />
               ),
             )}
+            {Array.from({ length: data.periodDays }, (_, index) => {
+              const step = 768 / Math.max(data.periodDays - 1, 1);
+              const width = Math.max(step, 8);
+              const x = 72 + index * step - width / 2;
+
+              return (
+                <rect
+                  key={`hit-${index}`}
+                  className="chart-hit-area"
+                  x={x}
+                  y="20"
+                  width={width}
+                  height="204"
+                  onMouseEnter={() => setHoveredIndex(index)}
+                />
+              );
+            })}
+            {hoveredIndex !== null && hoveredIndex < data.periodDays ? (
+              <g className="chart-tooltip" pointerEvents="none">
+                <line className="chart-hover-line" x1={hoveredX} x2={hoveredX} y1="20" y2="224" />
+                {hoveredCurrent !== null && hoveredCurrent !== undefined ? (
+                  <circle
+                    className="chart-hover-point current"
+                    cx={hoveredX}
+                    cy={20 + 204 - (hoveredCurrent / chart.maxValue) * 204}
+                    r="5"
+                  />
+                ) : null}
+                {hoveredPrevious !== null && hoveredPrevious !== undefined ? (
+                  <circle
+                    className="chart-hover-point previous"
+                    cx={hoveredX}
+                    cy={20 + 204 - (hoveredPrevious / chart.maxValue) * 204}
+                    r="5"
+                  />
+                ) : null}
+                <rect className="chart-tooltip-box" x={tooltipX} y="28" width="248" height="105" rx="5" />
+                <text className="chart-tooltip-title" x={tooltipX + 12} y="47">
+                  Dia {hoveredIndex + 1}
+                </text>
+                <text className="chart-tooltip-text" x={tooltipX + 12} y="66">
+                  Atual ({formatDate(shiftIsoDate(data.dailyPerformance.currentFirstDate, hoveredIndex))}): {hoveredCurrent === null || hoveredCurrent === undefined ? "Sem dado" : formatChartValue(metric, hoveredCurrent)}
+                </text>
+                <text className="chart-tooltip-text" x={tooltipX + 12} y="82">
+                  Anterior ({formatDate(shiftIsoDate(data.dailyPerformance.previousFirstDate, hoveredIndex))}): {hoveredPrevious === null || hoveredPrevious === undefined ? "Sem dado" : formatChartValue(metric, hoveredPrevious)}
+                </text>
+                <text className={`chart-tooltip-change ${periodChange.direction}`} x={tooltipX + 12} y="101">
+                  Vs. período anterior: {periodChange.label}
+                </text>
+                <text className={`chart-tooltip-change ${dayChange.direction}`} x={tooltipX + 12} y="118">
+                  Vs. dia anterior: {dayChange.label}
+                </text>
+              </g>
+            ) : null}
             </svg>
           </div>
         </>
@@ -444,6 +545,107 @@ function TopProductsTable({ data }: { data: DashboardData }) {
               <td className="number-cell">{formatNumber(product.unitsSold)}</td>
               <td className="number-cell">{formatShortCurrency(product.grossAmount)}</td>
               <td className="number-cell">{formatPercent(product.conversionRatePercent)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ProductVariation({ current, previous }: { current: number; previous: number }) {
+  const change = getChange(current, previous);
+  const Icon = change.direction === "up" ? ArrowUpRight : change.direction === "down" ? ArrowDownRight : Minus;
+
+  return (
+    <span className={`product-variation variation-${change.direction}`}>
+      <Icon size={13} /> {change.label}
+    </span>
+  );
+}
+
+function ProductRank({ current, previous }: { current: number | null; previous: number | null }) {
+  if (current === null) {
+    return (
+      <span className="rank-cell rank-down">
+        <strong>Sem vendas</strong>
+        <small>{previous ? `Antes #${previous}` : "Fora do ranking"}</small>
+      </span>
+    );
+  }
+
+  if (previous === null) {
+    return (
+      <span className="rank-cell rank-up">
+        <strong>#{current}</strong>
+        <small>Novo no ranking</small>
+      </span>
+    );
+  }
+
+  const movement = previous - current;
+
+  return (
+    <span className={`rank-cell rank-${movement > 0 ? "up" : movement < 0 ? "down" : "neutral"}`}>
+      <strong>#{current}</strong>
+      <small>{movement > 0 ? `Subiu ${movement}` : movement < 0 ? `Caiu ${Math.abs(movement)}` : "Manteve"}</small>
+    </span>
+  );
+}
+
+function ProductComparisonTable({ data }: { data: DashboardData }) {
+  if (!data.productComparisons.length) {
+    return <p className="empty-table-message">Ainda não há produtos nos períodos comparados.</p>;
+  }
+
+  return (
+    <div className="table-wrap product-comparison-wrap">
+      <table className="product-comparison-table">
+        <thead>
+          <tr>
+            <th>Produto</th>
+            <th className="number-cell">Visitas</th>
+            <th className="number-cell">Pedidos</th>
+            <th className="number-cell">Unid.</th>
+            <th className="number-cell">Valor bruto</th>
+            <th className="number-cell">Conv.</th>
+            <th>Variação</th>
+            <th>Posição por valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.productComparisons.slice(0, 12).map((product) => (
+            <tr key={product.itemId}>
+              <td className="primary-cell product-name-cell">
+                <strong>{product.title}</strong>
+                <small>{product.itemId}</small>
+              </td>
+              <td className="number-cell comparison-value-cell">
+                <strong>{formatNumber(product.current.visits)}</strong>
+                <small>ant. {formatNumber(product.previous.visits)}</small>
+              </td>
+              <td className="number-cell comparison-value-cell">
+                <strong>{formatNumber(product.current.ordersCount)}</strong>
+                <small>ant. {formatNumber(product.previous.ordersCount)}</small>
+              </td>
+              <td className="number-cell comparison-value-cell">
+                <strong>{formatNumber(product.current.unitsSold)}</strong>
+                <small>ant. {formatNumber(product.previous.unitsSold)}</small>
+              </td>
+              <td className="number-cell comparison-value-cell">
+                <strong>{formatShortCurrency(product.current.grossAmount)}</strong>
+                <small>ant. {formatShortCurrency(product.previous.grossAmount)}</small>
+              </td>
+              <td className="number-cell comparison-value-cell">
+                <strong>{formatTablePercent(product.current.conversionRatePercent)}</strong>
+                <small>ant. {formatTablePercent(product.previous.conversionRatePercent)}</small>
+              </td>
+              <td>
+                <ProductVariation current={product.current.grossAmount} previous={product.previous.grossAmount} />
+              </td>
+              <td>
+                <ProductRank current={product.currentRank} previous={product.previousRank} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -737,8 +939,11 @@ function ProductsView({ data }: { data: DashboardData }) {
         />
       </section>
       <section className="panel table-panel">
-        <PanelTitle title="Produtos do catálogo" subtitle="Desempenho comercial consolidado, independentemente da origem técnica do cadastro." />
-        <TopProductsTable data={data} />
+        <PanelTitle
+          title="Comparação por produto"
+          subtitle={`Desempenho dos ${data.periodDays} dias selecionados contra os ${data.periodDays} dias imediatamente anteriores.`}
+        />
+        <ProductComparisonTable data={data} />
       </section>
       <section className="content-grid equal">
         <article className="panel">
