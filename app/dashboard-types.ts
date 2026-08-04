@@ -23,6 +23,24 @@ export type TopProduct = {
   permalink: string | null;
 };
 
+export type ProductPeriodMetrics = {
+  visits: number;
+  unitsSold: number;
+  ordersCount: number;
+  grossAmount: number;
+  conversionRatePercent: number | null;
+};
+
+export type ProductComparison = {
+  itemId: string;
+  title: string;
+  catalogSource: string;
+  current: ProductPeriodMetrics;
+  previous: ProductPeriodMetrics;
+  currentRank: number | null;
+  previousRank: number | null;
+};
+
 export type SalesSummary = {
   visits: number | null;
   unitsSold: number;
@@ -79,6 +97,7 @@ export type DashboardData = {
     previous: DailyPerformancePoint[];
   };
   topProducts: TopProduct[];
+  productComparisons: ProductComparison[];
 };
 
 export const FALLBACK_DASHBOARD_DATA: DashboardData = {
@@ -139,4 +158,5 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
     previous: [],
   },
   topProducts: [],
+  productComparisons: [],
 };
