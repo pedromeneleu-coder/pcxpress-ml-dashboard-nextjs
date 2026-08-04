@@ -3,6 +3,8 @@ import {
   type CatalogRow,
   type DailyPerformancePoint,
   type DashboardData,
+  type ProductComparison,
+  type ProductPeriodMetrics,
   type TopProduct,
 } from "@/app/dashboard-types";
 
@@ -32,6 +34,7 @@ type AccountSummaryRecord = {
 };
 
 type ItemPerformanceRecord = {
+  performance_date: string;
   item_id: string | null;
   title: string | null;
   catalog_source: string | null;
@@ -300,7 +303,7 @@ function buildDailyPerformance(records: AccountSummaryRecord[]): DailyPerformanc
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function buildTopProducts(records: ItemPerformanceRecord[]): TopProduct[] {
+function aggregateProducts(records: ItemPerformanceRecord[]): TopProduct[] {
   const byItem = new Map<string, TopProduct>();
 
   for (const record of records) {
@@ -333,9 +336,69 @@ function buildTopProducts(records: ItemPerformanceRecord[]): TopProduct[] {
     byItem.set(record.item_id, current);
   }
 
-  return Array.from(byItem.values())
+  return Array.from(byItem.values());
+}
+
+function buildTopProducts(records: ItemPerformanceRecord[]): TopProduct[] {
+  return aggregateProducts(records)
     .sort((a, b) => b.grossAmount - a.grossAmount)
     .slice(0, 12);
+}
+
+function toProductMetrics(product: TopProduct | undefined): ProductPeriodMetrics {
+  return {
+    visits: product?.visits ?? 0,
+    unitsSold: product?.unitsSold ?? 0,
+    ordersCount: product?.ordersCount ?? 0,
+    grossAmount: product?.grossAmount ?? 0,
+    conversionRatePercent: product?.conversionRatePercent ?? null,
+  };
+}
+
+function buildProductComparisons(
+  currentRecords: ItemPerformanceRecord[],
+  previousRecords: ItemPerformanceRecord[],
+): ProductComparison[] {
+  const currentProducts = aggregateProducts(currentRecords);
+  const previousProducts = aggregateProducts(previousRecords);
+  const currentByItem = new Map(currentProducts.map((product) => [product.itemId, product]));
+  const previousByItem = new Map(previousProducts.map((product) => [product.itemId, product]));
+  const currentRanks = new Map(
+    [...currentProducts]
+      .sort((a, b) => b.grossAmount - a.grossAmount)
+      .filter((product) => product.grossAmount > 0)
+      .map((product, index) => [product.itemId, index + 1]),
+  );
+  const previousRanks = new Map(
+    [...previousProducts]
+      .sort((a, b) => b.grossAmount - a.grossAmount)
+      .filter((product) => product.grossAmount > 0)
+      .map((product, index) => [product.itemId, index + 1]),
+  );
+  const itemIds = new Set([...currentByItem.keys(), ...previousByItem.keys()]);
+
+  return Array.from(itemIds)
+    .map((itemId) => {
+      const current = currentByItem.get(itemId);
+      const previous = previousByItem.get(itemId);
+      const product = current ?? previous;
+
+      return {
+        itemId,
+        title: product?.title ?? itemId,
+        catalogSource: product?.catalogSource ?? "unknown",
+        current: toProductMetrics(current),
+        previous: toProductMetrics(previous),
+        currentRank: currentRanks.get(itemId) ?? null,
+        previousRank: previousRanks.get(itemId) ?? null,
+      };
+    })
+    .sort(
+      (a, b) =>
+        Math.max(b.current.grossAmount, b.previous.grossAmount) -
+        Math.max(a.current.grossAmount, a.previous.grossAmount),
+    )
+    .slice(0, 50);
 }
 
 export async function getDashboardData(periodDays: number): Promise<DashboardData> {
@@ -371,7 +434,6 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
     const previousLastDate = shiftDate(fromDate, -1);
     const previousFirstDate = startDateForPeriod(previousLastDate, periodDays);
     const combinedPeriodFilter = `(performance_date.gte.${previousFirstDate},performance_date.lte.${anchorDate})`;
-    const periodFilter = `(performance_date.gte.${fromDate},performance_date.lte.${anchorDate})`;
     const [catalogRecords, summaryRecords, performanceRecords] = await Promise.all([
       fetchAll<CatalogRecord>(
         config,
@@ -394,9 +456,9 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
         config,
         appendQuery("dashboard_daily_item_performance", {
           select:
-            "item_id,title,catalog_source,visits,units_sold,orders_count,gross_amount,conversion_rate_percent,available_quantity,status,thumbnail,permalink",
+            "performance_date,item_id,title,catalog_source,visits,units_sold,orders_count,gross_amount,conversion_rate_percent,available_quantity,status,thumbnail,permalink",
           account_id: accountFilter,
-          and: periodFilter,
+          and: combinedPeriodFilter,
         }),
       ),
     ]);
@@ -407,6 +469,8 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
       .sort();
     const currentSummaryRecords = summaryRecords.filter((record) => record.performance_date >= fromDate);
     const previousSummaryRecords = summaryRecords.filter((record) => record.performance_date < fromDate);
+    const currentPerformanceRecords = performanceRecords.filter((record) => record.performance_date >= fromDate);
+    const previousPerformanceRecords = performanceRecords.filter((record) => record.performance_date < fromDate);
 
     return {
       source: "supabase",
@@ -430,7 +494,8 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
         current: buildDailyPerformance(currentSummaryRecords),
         previous: buildDailyPerformance(previousSummaryRecords),
       },
-      topProducts: buildTopProducts(performanceRecords),
+      topProducts: buildTopProducts(currentPerformanceRecords),
+      productComparisons: buildProductComparisons(currentPerformanceRecords, previousPerformanceRecords),
     };
   } catch (error) {
     return {
