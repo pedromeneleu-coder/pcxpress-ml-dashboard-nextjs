@@ -146,6 +146,18 @@ button { letter-spacing: 0; }
 .chart-point { stroke: white; stroke-width: 1.4; vector-effect: non-scaling-stroke; }
 .chart-point.current { fill: var(--brand-dark); }
 .chart-point.previous { fill: var(--amber); }
+.chart-hit-area { fill: transparent; cursor: crosshair; }
+.chart-hover-line { stroke: #7d888e; stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.chart-hover-point { stroke: white; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.chart-hover-point.current { fill: var(--brand-dark); }
+.chart-hover-point.previous { fill: var(--amber); }
+.chart-tooltip-box { fill: #101114; stroke: #30383c; stroke-width: 1; }
+.chart-tooltip-title { fill: white; font-size: 10px; font-weight: 800; }
+.chart-tooltip-text { fill: #c4ccd0; font-size: 8.5px; font-weight: 600; }
+.chart-tooltip-change { font-size: 8.5px; font-weight: 800; }
+.chart-tooltip-change.up { fill: #47d7ac; }
+.chart-tooltip-change.down { fill: #ff8b8b; }
+.chart-tooltip-change.neutral { fill: #b7c0c4; }
 .chart-empty-state { min-height: 180px; border: 1px dashed #cfd6da; border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 10px; text-align: center; padding: 20px; }
 .tiny-label { background: #f1f4f5; color: #56636b; border-radius: 4px; padding: 5px 7px; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .coverage-bar { width: 100%; height: 20px; display: flex; overflow: hidden; border-radius: 4px; background: #eef1f2; }
@@ -182,6 +194,22 @@ td { padding: 13px 12px; border-bottom: 1px solid #edf0f1; font-size: 11px; colo
 tbody tr:last-child td { border-bottom: 0; }
 .primary-cell { color: var(--ink); font-weight: 700; }
 .number-cell { text-align: right; font-variant-numeric: tabular-nums; }
+.product-comparison-table { min-width: 1040px; }
+.product-name-cell { width: 250px; max-width: 250px; }
+.product-name-cell strong, .product-name-cell small, .comparison-value-cell strong, .comparison-value-cell small { display: block; }
+.product-name-cell strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.product-name-cell small, .comparison-value-cell small { margin-top: 3px; color: var(--muted); font-size: 8px; font-weight: 600; }
+.comparison-value-cell strong { color: var(--ink); font-size: 10px; }
+.product-variation { min-width: 68px; width: fit-content; min-height: 23px; padding: 4px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.variation-up { color: #087b5d; background: #e9f8f3; }
+.variation-down { color: #ad3434; background: #fcecec; }
+.variation-neutral { color: #657078; background: #eef1f2; }
+.rank-cell { min-width: 82px; display: flex; flex-direction: column; gap: 3px; }
+.rank-cell strong { color: var(--ink); font-size: 10px; }
+.rank-cell small { font-size: 8px; font-weight: 700; }
+.rank-up small { color: #087b5d; }
+.rank-down small { color: #ad3434; }
+.rank-neutral small { color: var(--muted); }
 .status-badge { display: inline-flex; align-items: center; white-space: nowrap; padding: 5px 7px; border-radius: 4px; font-size: 9px; font-weight: 800; }
 .status-good { background: #e9f8f3; color: #087b5d; }
 .status-warning { background: #fff4df; color: #9a6200; }
