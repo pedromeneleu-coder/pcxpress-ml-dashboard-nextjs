@@ -75,3 +75,18 @@ test("compares products across both windows and renders interactive chart detail
   assert.match(page, /Vs\. período anterior/);
   assert.match(page, /Vs\. dia anterior/);
 });
+
+test("prioritizes the current commercial engine without inventing future metrics", async () => {
+  const page = await readFile(new URL("app/page.tsx", root), "utf8");
+
+  const overviewStart = page.indexOf("function OverviewView");
+  const salesStart = page.indexOf("function SalesView");
+  const overview = page.slice(overviewStart, salesStart);
+
+  assert.ok(overviewStart >= 0 && salesStart > overviewStart);
+  assert.ok(overview.indexOf('label="Valor bruto"') < overview.indexOf('label="Pedidos"'));
+  assert.match(overview, /Motor comercial do período/);
+  assert.match(overview, /Visitas aos anúncios/);
+  assert.match(overview, /Pedidos por visita/);
+  assert.doesNotMatch(overview, /ACOS|ROAS|Buy-box|Faturamento líquido|Devoluções/);
+});
