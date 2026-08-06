@@ -296,20 +296,6 @@ tbody tr:last-child td { border-bottom: 0; }
 .timeline-placeholder::before { top: 35%; }
 .timeline-placeholder::after { top: 65%; }
 .timeline-placeholder span { flex: 1; min-width: 8px; max-width: 38px; background: linear-gradient(to top, #00a9cd, #00d8ff); border-radius: 3px 3px 0 0; z-index: 1; opacity: .72; }
-.pipeline-list { display: flex; flex-direction: column; }
-.pipeline-list > div { display: grid; grid-template-columns: 31px 1fr auto; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid #edf0f1; }
-.pipeline-list > div:last-child { border-bottom: 0; }
-.pipeline-icon { width: 30px; height: 30px; display: grid; place-items: center; background: #edfafd; color: #0087a2; border-radius: 5px; }
-.pipeline-list p { margin: 0; display: flex; flex-direction: column; gap: 2px; }
-.pipeline-list strong { font-size: 10px; }
-.pipeline-list small { font-size: 9px; color: var(--muted); }
-.backfill-flow { display: grid; grid-template-columns: 1fr 22px 1fr 22px 1fr; align-items: center; gap: 6px; }
-.backfill-flow div { min-height: 90px; background: #f4f6f7; border-radius: 6px; padding: 13px; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
-.backfill-flow div.highlight { background: #fff6e6; border: 1px solid #f1cf8f; }
-.backfill-flow span { font-size: 22px; font-weight: 800; }
-.backfill-flow small { color: var(--muted); font-size: 9px; line-height: 1.35; }
-.backfill-flow i { height: 1px; background: #bdc6ca; }
-.backfill-note { margin: 15px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: #6c5a38; font-size: 9px; display: flex; align-items: center; gap: 7px; }
 .sidebar-overlay { display: none; }
 
 @keyframes spin {
@@ -362,6 +348,4 @@ tbody tr:last-child td { border-bottom: 0; }
   .empty-data-hero { align-items: flex-start; flex-wrap: wrap; }
   .empty-data-hero .status-badge { margin-left: 66px; }
   .seller-header { align-items: flex-start; flex-wrap: wrap; }
-  .backfill-flow { grid-template-columns: 1fr; }
-  .backfill-flow i { width: 1px; height: 14px; justify-self: center; }
 }
