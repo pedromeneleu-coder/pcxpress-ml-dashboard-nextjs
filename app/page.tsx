@@ -477,6 +477,7 @@ function KpiCard({
   icon: Icon,
   tone = "neutral",
   comparison,
+  featured = false,
 }: {
   label: string;
   value: string;
@@ -484,9 +485,10 @@ function KpiCard({
   icon: typeof Activity;
   tone?: "neutral" | "good" | "warning" | "brand";
   comparison?: ComparisonMetric;
+  featured?: boolean;
 }) {
   return (
-    <article className={`kpi-card kpi-${tone}`}>
+    <article className={`kpi-card kpi-${tone}${featured ? " kpi-featured" : ""}`}>
       <div className="kpi-topline">
         <span>{label}</span>
         <span className="icon-box" aria-hidden="true">
@@ -655,15 +657,46 @@ function ProductComparisonTable({ data }: { data: DashboardData }) {
 }
 
 function OverviewView({ data }: { data: DashboardData }) {
+  const accountConversion = data.sales.conversionRatePercent;
+  const unitsPerOrder = data.sales.ordersCount > 0 ? data.sales.unitsSold / data.sales.ordersCount : null;
+  const previousUnitsPerOrder = data.comparison.sales && data.comparison.sales.ordersCount > 0
+    ? data.comparison.sales.unitsSold / data.comparison.sales.ordersCount
+    : null;
+  const lowConversionProducts = accountConversion === null
+    ? []
+    : data.topProducts.filter(
+        (product) =>
+          product.visits > 0 &&
+          product.conversionRatePercent !== null &&
+          product.conversionRatePercent < accountConversion,
+      );
+  const stockRiskProducts = data.topProducts.filter(
+    (product) =>
+      product.availableQuantity !== null &&
+      product.unitsSold > 0 &&
+      product.availableQuantity <= product.unitsSold,
+  );
+  const decliningProducts = data.productComparisons.filter(
+    (product) =>
+      product.previous.grossAmount > 0 &&
+      product.current.grossAmount < product.previous.grossAmount * 0.9,
+  );
+
   return (
     <>
-      <section className="kpi-grid">
+      <section className="kpi-grid executive-kpis">
         <KpiCard
-          label="Catálogo consolidado"
-          value={formatNumber(data.catalog.total)}
-          detail="Anúncios únicos na base analítica"
-          icon={Box}
+          label="Valor bruto"
+          value={formatShortCurrency(data.sales.grossAmount)}
+          detail={`Resultado acumulado em ${data.periodDays} dias`}
+          icon={CircleDollarSign}
           tone="brand"
+          featured
+          comparison={{
+            current: data.sales.grossAmount,
+            previous: data.comparison.sales?.grossAmount ?? null,
+            periodDays: data.periodDays,
+          }}
         />
         <KpiCard
           label="Pedidos"
@@ -677,29 +710,66 @@ function OverviewView({ data }: { data: DashboardData }) {
           }}
         />
         <KpiCard
-          label="Unidades vendidas"
-          value={formatNumber(data.sales.unitsSold)}
-          detail="Vinculadas ao catálogo consolidado"
-          icon={TrendingUp}
+          label="Ticket médio"
+          value={data.sales.avgTicket === null ? "Após conexão" : formatShortCurrency(data.sales.avgTicket)}
+          detail="Valor bruto dividido por pedidos"
+          icon={Gauge}
           tone="good"
           comparison={{
-            current: data.sales.unitsSold,
-            previous: data.comparison.sales?.unitsSold ?? null,
+            current: data.sales.avgTicket,
+            previous: data.comparison.sales?.avgTicket ?? null,
             periodDays: data.periodDays,
           }}
         />
         <KpiCard
-          label="Valor bruto"
-          value={formatShortCurrency(data.sales.grossAmount)}
-          detail={data.connected ? "Período selecionado" : "Snapshot validado"}
-          icon={CircleDollarSign}
+          label="Unidades vendidas"
+          value={formatNumber(data.sales.unitsSold)}
+          detail={unitsPerOrder === null ? "Sem pedidos no período" : `${unitsPerOrder.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} por pedido`}
+          icon={TrendingUp}
           tone="warning"
           comparison={{
-            current: data.sales.grossAmount,
-            previous: data.comparison.sales?.grossAmount ?? null,
+            current: unitsPerOrder,
+            previous: previousUnitsPerOrder,
             periodDays: data.periodDays,
           }}
         />
+      </section>
+
+      <section className="panel commerce-flow-panel">
+        <PanelTitle
+          title="Motor comercial do período"
+          subtitle="A leitura conecta aquisição de tráfego, eficiência do anúncio e resultado comercial."
+          action={<span className="tiny-label">{data.periodDays} dias</span>}
+        />
+        <div className="commerce-flow" aria-label="Visitas, conversão, pedidos e valor bruto">
+          <div className="commerce-flow-step">
+            <span className="flow-icon"><Eye size={17} /></span>
+            <small>01 · Tráfego</small>
+            <strong>{data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}</strong>
+            <p>Visitas aos anúncios</p>
+          </div>
+          <span className="flow-arrow" aria-hidden="true">→</span>
+          <div className="commerce-flow-step">
+            <span className="flow-icon"><Gauge size={17} /></span>
+            <small>02 · Eficiência</small>
+            <strong>{formatPercent(data.sales.conversionRatePercent)}</strong>
+            <p>Pedidos por visita</p>
+          </div>
+          <span className="flow-arrow" aria-hidden="true">→</span>
+          <div className="commerce-flow-step">
+            <span className="flow-icon"><ShoppingBag size={17} /></span>
+            <small>03 · Demanda</small>
+            <strong>{formatNumber(data.sales.ordersCount)}</strong>
+            <p>Pedidos confirmados</p>
+          </div>
+          <span className="flow-arrow" aria-hidden="true">→</span>
+          <div className="commerce-flow-step flow-result">
+            <span className="flow-icon"><CircleDollarSign size={17} /></span>
+            <small>04 · Resultado</small>
+            <strong>{formatShortCurrency(data.sales.grossAmount)}</strong>
+            <p>Valor bruto vendido</p>
+          </div>
+        </div>
       </section>
 
       <PeriodComparisonChart data={data} />
@@ -711,28 +781,35 @@ function OverviewView({ data }: { data: DashboardData }) {
             subtitle="Todos os anúncios e vendas entram em uma única leitura comercial, sem duplicidade entre fontes."
             action={<span className="tiny-label">{formatNumber(data.catalog.total)} anúncios</span>}
           />
-          <div className="coverage-bar" aria-label="Cobertura do catálogo consolidado">
+          <div className="coverage-bar" aria-label="Composição do catálogo consolidado">
             <span
               className="coverage-current"
-              style={{ width: `${data.catalog.total ? ((data.catalog.total - data.catalog.unknown) / data.catalog.total) * 100 : 0}%` }}
+              style={{ width: `${data.catalog.total ? (data.catalog.current / data.catalog.total) * 100 : 0}%` }}
+            />
+            <span
+              className="coverage-history"
+              style={{ width: `${data.catalog.total ? (data.catalog.retained / data.catalog.total) * 100 : 0}%` }}
             />
           </div>
           <div className="legend-row">
             <span>
-              <i className="legend-dot dot-cyan" />Itens integrados <b>{formatNumber(data.catalog.total - data.catalog.unknown)}</b>
+              <i className="legend-dot dot-cyan" />Com atributos atuais <b>{formatNumber(data.catalog.current)}</b>
             </span>
             <span>
-              <i className="legend-dot dot-amber" />Pendências <b>{formatNumber(data.catalog.unknown)}</b>
+              <i className="legend-dot dot-amber" />Histórico preservado <b>{formatNumber(data.catalog.retained)}</b>
+            </span>
+            <span>
+              <i className="legend-dot dot-neutral" />Pendências <b>{formatNumber(data.catalog.unknown)}</b>
             </span>
           </div>
           <div className="coverage-numbers">
             <div>
-              <strong>{formatNumber(data.catalog.total)}</strong>
-              <span>Anúncios no catálogo</span>
+              <strong>{formatNumber(data.catalog.current)}</strong>
+              <span>Com preço, estoque e status</span>
             </div>
             <div>
-              <strong>{formatNumber(data.sales.ordersCount)}</strong>
-              <span>Pedidos no período</span>
+              <strong>{formatNumber(data.catalog.retained)}</strong>
+              <span>Preservados pelas vendas</span>
             </div>
             <div>
               <strong>{formatNumber(data.catalog.unknown)}</strong>
@@ -745,30 +822,30 @@ function OverviewView({ data }: { data: DashboardData }) {
           <PanelTitle title="Leitura para decisão" subtitle="O que merece atenção agora" />
           <ul className="decision-list">
             <li>
-              <span className="decision-icon warning">
-                <AlertTriangle size={17} />
+              <span className={`decision-icon ${lowConversionProducts.length ? "warning" : "good"}`}>
+                {lowConversionProducts.length ? <AlertTriangle size={17} /> : <CheckCircle2 size={17} />}
               </span>
               <div>
-                <strong>Histórico comercial preservado</strong>
-                <small>As vendas permanecem vinculadas aos anúncios do catálogo consolidado.</small>
+                <strong>{lowConversionProducts.length ? `${lowConversionProducts.length} anúncios abaixo da conversão média` : "Conversão sem alerta entre os líderes"}</strong>
+                <small>{lowConversionProducts.length ? "Priorize preço, oferta e conteúdo nos produtos que já recebem visitas." : "Nenhum produto do ranking está abaixo da média da conta com a base disponível."}</small>
               </div>
             </li>
             <li>
-              <span className="decision-icon good">
-                <CheckCircle2 size={17} />
+              <span className={`decision-icon ${stockRiskProducts.length ? "warning" : "good"}`}>
+                {stockRiskProducts.length ? <AlertTriangle size={17} /> : <CheckCircle2 size={17} />}
               </span>
               <div>
-                <strong>{data.catalog.unknown === 0 ? "100%" : "Revisar"} dos itens estão classificados</strong>
-                <small>Nenhuma venda precisa ficar fora da leitura comercial.</small>
+                <strong>{stockRiskProducts.length ? `${stockRiskProducts.length} anúncios com sinal de estoque curto` : "Sem risco de estoque entre os líderes"}</strong>
+                <small>{stockRiskProducts.length ? "O estoque disponível é menor ou igual às unidades vendidas na janela." : "Os produtos do ranking não atingiram o critério de atenção desta leitura."}</small>
               </div>
             </li>
             <li>
-              <span className="decision-icon brand">
-                <Zap size={17} />
+              <span className={`decision-icon ${decliningProducts.length ? "warning" : "brand"}`}>
+                {decliningProducts.length ? <ArrowDownRight size={17} /> : <Zap size={17} />}
               </span>
               <div>
-                <strong>{data.connected ? "Supabase conectado" : "Base pronta para conectar"}</strong>
-                <small>As origens ficam disponíveis como auditoria técnica.</small>
+                <strong>{decliningProducts.length ? `${decliningProducts.length} produtos caíram mais de 10%` : "Sem queda relevante na comparação disponível"}</strong>
+                <small>{decliningProducts.length ? `Comparação contra os ${data.periodDays} dias imediatamente anteriores.` : "A leitura será refinada conforme o histórico comparável crescer."}</small>
               </div>
             </li>
           </ul>
