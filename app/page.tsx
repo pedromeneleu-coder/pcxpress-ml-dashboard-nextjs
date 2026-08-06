@@ -35,7 +35,7 @@ import {
   type DashboardData,
 } from "./dashboard-types";
 
-type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "seller" | "quality";
+type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "seller";
 
 const navItems = [
   { id: "overview", label: "Visão geral", icon: LayoutDashboard },
@@ -44,7 +44,6 @@ const navItems = [
   { id: "performance", label: "Performance", icon: BarChart3 },
   { id: "traffic", label: "Tráfego e conversão", icon: Eye },
   { id: "seller", label: "Saúde do seller", icon: ShieldCheck },
-  { id: "quality", label: "Qualidade da base", icon: Database },
 ] as const;
 
 const viewMeta: Record<ViewId, { title: string; description: string }> = {
@@ -72,18 +71,7 @@ const viewMeta: Record<ViewId, { title: string; description: string }> = {
     title: "Saúde do seller",
     description: "Reputação e sinais operacionais da conta PCXpress.",
   },
-  quality: {
-    title: "Qualidade da base",
-    description: "Rastreabilidade das sincronizações e cobertura do catálogo analítico.",
-  },
 };
-
-const pipelineRows = [
-  { name: "Seller", window: "Snapshot diário", status: "Disponível" },
-  { name: "Anúncios", window: "Estado atual", status: "Disponível" },
-  { name: "Pedidos", window: "Janela móvel", status: "Disponível" },
-  { name: "Visitas", window: "Janela móvel", status: "Disponível" },
-];
 
 function periodToDays(period: string) {
   if (period === "7d") return 7;
@@ -1323,60 +1311,6 @@ function SellerView({ data }: { data: DashboardData }) {
   );
 }
 
-function QualityView({ data }: { data: DashboardData }) {
-  return (
-    <>
-      <section className="kpi-grid">
-        <KpiCard label="Itens classificados" value={`${formatNumber(data.catalog.total - data.catalog.unknown)} / ${formatNumber(data.catalog.total)}`} detail="Cobertura de origem completa" icon={CheckCircle2} tone="good" />
-        <KpiCard label="Com atributos atuais" value={formatNumber(data.catalog.current)} detail="Preço, estoque e status disponíveis" icon={Zap} tone="brand" />
-        <KpiCard label="Cobertura complementar" value={formatNumber(data.catalog.retained)} detail="Registros comerciais preservados" icon={Database} tone="warning" />
-        <KpiCard label="Pendência desconhecida" value={formatNumber(data.catalog.unknown)} detail="Itens sem tratamento" icon={ShieldCheck} tone="good" />
-      </section>
-      <section className="content-grid equal">
-        <article className="panel">
-          <PanelTitle title="Pipelines de dados" subtitle="Cobertura e período de cada domínio" />
-          <div className="pipeline-list">
-            {pipelineRows.map((row) => (
-              <div key={row.name}>
-                <span className="pipeline-icon">
-                  <RefreshCw size={16} />
-                </span>
-                <p>
-                  <strong>{row.name}</strong>
-                  <small>{row.window}</small>
-                </p>
-                <span className="status-badge status-good">{row.status}</span>
-              </div>
-            ))}
-          </div>
-        </article>
-        <article className="panel">
-          <PanelTitle title="Tratamento da cobertura" subtitle="Resultado do saneamento dos anúncios vendidos" />
-          <div className="backfill-flow">
-            <div>
-              <span>176</span>
-              <small>Itens faltantes no início</small>
-            </div>
-            <i />
-            <div>
-              <span>73</span>
-              <small>Recuperados pela API</small>
-            </div>
-            <i />
-            <div className="highlight">
-              <span>{formatNumber(data.catalog.retained)}</span>
-              <small>Integrados pelo histórico de pedidos</small>
-            </div>
-          </div>
-          <p className="backfill-note">
-            <AlertTriangle size={16} />Os atributos operacionais dependem da API; o histórico comercial permanece completo para análise.
-          </p>
-        </article>
-      </section>
-    </>
-  );
-}
-
 export default function Home() {
   const [activeView, setActiveView] = useState<ViewId>("overview");
   const [period, setPeriod] = useState("30d");
@@ -1428,8 +1362,6 @@ export default function Home() {
         return <TrafficView data={dashboardData} />;
       case "seller":
         return <SellerView data={dashboardData} />;
-      case "quality":
-        return <QualityView data={dashboardData} />;
       default:
         return <OverviewView data={dashboardData} />;
     }
