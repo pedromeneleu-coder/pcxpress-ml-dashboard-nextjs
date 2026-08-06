@@ -89,4 +89,5 @@ test("prioritizes the current commercial engine without inventing future metrics
   assert.match(overview, /Visitas aos anúncios/);
   assert.match(overview, /Pedidos por visita/);
   assert.doesNotMatch(overview, /ACOS|ROAS|Buy-box|Faturamento líquido|Devoluções/);
+  assert.doesNotMatch(page, /Qualidade da base|QualityView|case "quality"/);
 });
