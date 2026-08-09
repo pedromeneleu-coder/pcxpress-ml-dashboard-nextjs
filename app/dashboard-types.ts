@@ -1,5 +1,12 @@
 export type CatalogTone = "good" | "warning" | "neutral" | "brand";
 
+export type ComparisonMode =
+  | "previousPeriod"
+  | "previousMonthEquivalent"
+  | "previousMonthFull"
+  | "custom"
+  | "none";
+
 export type CatalogRow = {
   source: string;
   status: string;
@@ -86,7 +93,22 @@ export type DashboardData = {
   comparison: {
     firstDate: string | null;
     lastDate: string | null;
+    periodDays: number;
     sales: SalesSummary | null;
+  };
+  dateSelection: {
+    currentStart: string;
+    currentEnd: string;
+    currentDays: number;
+    comparisonMode: ComparisonMode;
+    comparisonStart: string | null;
+    comparisonEnd: string | null;
+    comparisonDays: number;
+    comparisonLabel: string;
+  };
+  availableDateRange: {
+    firstDate: string | null;
+    lastDate: string | null;
   };
   dailyPerformance: {
     currentFirstDate: string | null;
@@ -147,7 +169,22 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
   comparison: {
     firstDate: null,
     lastDate: null,
+    periodDays: 0,
     sales: null,
+  },
+  dateSelection: {
+    currentStart: "2026-01-27",
+    currentEnd: "2026-02-25",
+    currentDays: 30,
+    comparisonMode: "previousPeriod",
+    comparisonStart: "2025-12-28",
+    comparisonEnd: "2026-01-26",
+    comparisonDays: 30,
+    comparisonLabel: "30 dias anteriores",
+  },
+  availableDateRange: {
+    firstDate: null,
+    lastDate: "2026-02-25",
   },
   dailyPerformance: {
     currentFirstDate: null,
