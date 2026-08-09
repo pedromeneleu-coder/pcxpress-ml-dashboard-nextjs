@@ -31,16 +31,30 @@ test("does not require legacy Vercel function routing", async () => {
   assert.doesNotMatch(packageJson, /vinext|vite|wrangler|@vercel\/node/);
 });
 
-test("compares each selected window with the immediately previous window", async () => {
+test("supports automatic and custom date comparisons", async () => {
   const [dataSource, page] = await Promise.all([
     readFile(new URL("lib/supabase-dashboard.ts", root), "utf8"),
     readFile(new URL("app/page.tsx", root), "utf8"),
   ]);
 
-  assert.match(dataSource, /const previousLastDate = shiftDate\(fromDate, -1\)/);
-  assert.match(dataSource, /const previousFirstDate = startDateForPeriod\(previousLastDate, periodDays\)/);
-  assert.match(dataSource, /and: combinedPeriodFilter/);
+  assert.match(dataSource, /comparisonMode === "previousPeriod"/);
+  assert.match(dataSource, /comparisonMode === "previousMonthEquivalent"/);
+  assert.match(dataSource, /comparisonMode === "previousMonthFull"/);
+  assert.match(dataSource, /comparisonMode === "custom"/);
+  assert.match(dataSource, /or: `\(and\(performance_date\.gte\./);
+  assert.match(page, /Outro período, escolhido manualmente/);
+  assert.match(page, /Sem comparação/);
   assert.match(page, /vs\. período anterior/);
+});
+
+test("validates date ranges before querying Supabase", async () => {
+  const route = await readFile(new URL("app/api/dashboard/route.ts", root), "utf8");
+
+  assert.match(route, /const MAX_RANGE_DAYS = 366/);
+  assert.match(route, /validateRange\("Período principal"/);
+  assert.match(route, /validateRange\("Período de comparação"/);
+  assert.match(route, /comparisonMode === "custom"/);
+  assert.match(route, /status: 400/);
 });
 
 test("uses commercial formulas consistently and exposes both daily series", async () => {
@@ -68,7 +82,7 @@ test("compares products across both windows and renders interactive chart detail
   ]);
 
   assert.match(dataSource, /performance_date,item_id,title/);
-  assert.match(dataSource, /and: combinedPeriodFilter/);
+  assert.match(dataSource, /\.\.\.periodFilter/);
   assert.match(dataSource, /productComparisons: buildProductComparisons/);
   assert.match(types, /export type ProductComparison/);
   assert.match(page, /Comparação por produto/);
