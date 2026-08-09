@@ -31,6 +31,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import {
   FALLBACK_DASHBOARD_DATA,
+  type ComparisonMode,
   type DailyPerformancePoint,
   type DashboardData,
 } from "./dashboard-types";
@@ -77,6 +78,31 @@ function periodToDays(period: string) {
   if (period === "7d") return 7;
   if (period === "90d") return 90;
   return 30;
+}
+
+type DateFilterDraft = {
+  currentStart: string;
+  currentEnd: string;
+  comparisonMode: ComparisonMode;
+  comparisonStart: string;
+  comparisonEnd: string;
+};
+
+function dateRangeDays(firstDate: string, lastDate: string) {
+  if (!firstDate || !lastDate) return 0;
+  return Math.floor(
+    (new Date(`${lastDate}T00:00:00Z`).getTime() - new Date(`${firstDate}T00:00:00Z`).getTime()) / 86400000,
+  ) + 1;
+}
+
+function draftFromData(data: DashboardData): DateFilterDraft {
+  return {
+    currentStart: data.dateSelection.currentStart,
+    currentEnd: data.dateSelection.currentEnd,
+    comparisonMode: data.dateSelection.comparisonMode,
+    comparisonStart: data.dateSelection.comparisonStart ?? "",
+    comparisonEnd: data.dateSelection.comparisonEnd ?? "",
+  };
 }
 
 function formatNumber(value: number) {
@@ -129,6 +155,11 @@ function formatDate(value: string | null) {
   }
 
   return new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
+}
+
+function comparisonRangeText(data: DashboardData) {
+  if (!data.comparison.periodDays) return "sem período de comparação";
+  return `${formatDate(data.comparison.firstDate)} a ${formatDate(data.comparison.lastDate)} (${data.comparison.periodDays} dias)`;
 }
 
 function shiftIsoDate(value: string | null, days: number) {
@@ -232,16 +263,17 @@ function buildChartPath(values: (number | null)[], maxValue: number) {
 function PeriodComparisonChart({ data }: { data: DashboardData }) {
   const [metric, setMetric] = useState<ChartMetricId>("grossAmount");
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const chartDays = Math.max(data.periodDays, data.comparison.periodDays, 1);
   const current = alignDailyValues(
     data.dailyPerformance.current,
     data.dailyPerformance.currentFirstDate,
-    data.periodDays,
+    chartDays,
     metric,
   );
   const previous = alignDailyValues(
     data.dailyPerformance.previous,
     data.dailyPerformance.previousFirstDate,
-    data.periodDays,
+    chartDays,
     metric,
   );
   const populatedValues = [...current, ...previous].filter((value): value is number => value !== null);
@@ -259,7 +291,7 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
   const hoveredPriorDay = hoveredIndex === null || hoveredIndex === 0 ? null : chart.current[hoveredIndex - 1];
   const hoveredX = hoveredIndex === null
     ? 72
-    : 72 + (hoveredIndex / Math.max(data.periodDays - 1, 1)) * 768;
+    : 72 + (hoveredIndex / Math.max(chartDays - 1, 1)) * 768;
   const tooltipX = hoveredX > 570 ? hoveredX - 258 : hoveredX + 10;
   const periodChange = getChange(hoveredCurrent, hoveredPrevious);
   const dayChange = getChange(hoveredCurrent, hoveredPriorDay);
@@ -268,7 +300,9 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
     <section className="panel trend-panel">
       <PanelTitle
         title="Evolução diária: atual vs. anterior"
-        subtitle="As duas linhas usam dias equivalentes dentro de janelas consecutivas, sem sobreposição."
+        subtitle={data.comparison.periodDays
+          ? "As linhas alinham os períodos pelo primeiro dia de cada intervalo selecionado."
+          : "A linha mostra somente o período principal selecionado."}
         action={
           <div className="chart-tabs" aria-label="Métrica do gráfico">
             {chartMetrics.map((item) => (
@@ -294,9 +328,11 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
             <span>
               <i className="chart-line current" /> Atual: {formatDate(data.dailyPerformance.currentFirstDate)} a {formatDate(data.dailyPerformance.currentLastDate)}
             </span>
-            <span>
-              <i className="chart-line previous" /> Anterior: {formatDate(data.dailyPerformance.previousFirstDate)} a {formatDate(data.dailyPerformance.previousLastDate)}
-            </span>
+            {data.comparison.periodDays ? (
+              <span>
+                <i className="chart-line previous" /> Comparação: {formatDate(data.dailyPerformance.previousFirstDate)} a {formatDate(data.dailyPerformance.previousLastDate)}
+              </span>
+            ) : null}
           </div>
           <div className="chart-wrap">
             <svg
@@ -318,10 +354,10 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
             <text className="chart-axis-text" x="62" y="228" textAnchor="end">0</text>
             <text className="chart-axis-text" x="72" y="252">Dia 1</text>
             <text className="chart-axis-text" x="456" y="252" textAnchor="middle">
-              Dia {Math.ceil(data.periodDays / 2)}
+              Dia {Math.ceil(chartDays / 2)}
             </text>
             <text className="chart-axis-text" x="840" y="252" textAnchor="end">
-              Dia {data.periodDays}
+              Dia {chartDays}
             </text>
             <path className="trend-line previous" d={chart.previousPath} />
             <path className="trend-line current" d={chart.currentPath} />
@@ -330,9 +366,9 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
                 <circle
                   key={`current-${index}`}
                   className="chart-point current"
-                  cx={72 + (index / Math.max(data.periodDays - 1, 1)) * 768}
+                  cx={72 + (index / Math.max(chartDays - 1, 1)) * 768}
                   cy={20 + 204 - (value / chart.maxValue) * 204}
-                  r={data.periodDays > 30 ? 1.7 : 2.8}
+                  r={chartDays > 30 ? 1.7 : 2.8}
                 />
               ),
             )}
@@ -341,14 +377,14 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
                 <circle
                   key={`previous-${index}`}
                   className="chart-point previous"
-                  cx={72 + (index / Math.max(data.periodDays - 1, 1)) * 768}
+                  cx={72 + (index / Math.max(chartDays - 1, 1)) * 768}
                   cy={20 + 204 - (value / chart.maxValue) * 204}
-                  r={data.periodDays > 30 ? 1.7 : 2.8}
+                  r={chartDays > 30 ? 1.7 : 2.8}
                 />
               ),
             )}
-            {Array.from({ length: data.periodDays }, (_, index) => {
-              const step = 768 / Math.max(data.periodDays - 1, 1);
+            {Array.from({ length: chartDays }, (_, index) => {
+              const step = 768 / Math.max(chartDays - 1, 1);
               const width = Math.max(step, 8);
               const x = 72 + index * step - width / 2;
 
@@ -364,7 +400,7 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
                 />
               );
             })}
-            {hoveredIndex !== null && hoveredIndex < data.periodDays ? (
+            {hoveredIndex !== null && hoveredIndex < chartDays ? (
               <g className="chart-tooltip" pointerEvents="none">
                 <line className="chart-hover-line" x1={hoveredX} x2={hoveredX} y1="20" y2="224" />
                 {hoveredCurrent !== null && hoveredCurrent !== undefined ? (
@@ -388,10 +424,10 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
                   Dia {hoveredIndex + 1}
                 </text>
                 <text className="chart-tooltip-text" x={tooltipX + 12} y="66">
-                  Atual ({formatDate(shiftIsoDate(data.dailyPerformance.currentFirstDate, hoveredIndex))}): {hoveredCurrent === null || hoveredCurrent === undefined ? "Sem dado" : formatChartValue(metric, hoveredCurrent)}
+                  Atual ({formatDate(hoveredIndex < data.periodDays ? shiftIsoDate(data.dailyPerformance.currentFirstDate, hoveredIndex) : null)}): {hoveredCurrent === null || hoveredCurrent === undefined ? "Sem dado" : formatChartValue(metric, hoveredCurrent)}
                 </text>
                 <text className="chart-tooltip-text" x={tooltipX + 12} y="82">
-                  Anterior ({formatDate(shiftIsoDate(data.dailyPerformance.previousFirstDate, hoveredIndex))}): {hoveredPrevious === null || hoveredPrevious === undefined ? "Sem dado" : formatChartValue(metric, hoveredPrevious)}
+                  Anterior ({formatDate(hoveredIndex < data.comparison.periodDays ? shiftIsoDate(data.dailyPerformance.previousFirstDate, hoveredIndex) : null)}): {hoveredPrevious === null || hoveredPrevious === undefined ? "Sem dado" : formatChartValue(metric, hoveredPrevious)}
                 </text>
                 <text className={`chart-tooltip-change ${periodChange.direction}`} x={tooltipX + 12} y="101">
                   Vs. período anterior: {periodChange.label}
@@ -451,7 +487,7 @@ function ComparisonIndicator({ current, previous, periodDays, compact = false }:
   return (
     <span
       className={`comparison-indicator comparison-${direction}${compact ? " comparison-compact" : ""}`}
-      title={`Comparação com os ${periodDays} dias anteriores`}
+      title={`Período principal: ${periodDays} dias; comparação conforme o filtro global`}
     >
       <Icon size={13} /> {formattedChange}% vs. período anterior
     </span>
@@ -833,7 +869,7 @@ function OverviewView({ data }: { data: DashboardData }) {
               </span>
               <div>
                 <strong>{decliningProducts.length ? `${decliningProducts.length} produtos caíram mais de 10%` : "Sem queda relevante na comparação disponível"}</strong>
-                <small>{decliningProducts.length ? `Comparação contra os ${data.periodDays} dias imediatamente anteriores.` : "A leitura será refinada conforme o histórico comparável crescer."}</small>
+                <small>{decliningProducts.length ? `Comparação contra ${comparisonRangeText(data)}.` : "A leitura será refinada conforme o histórico comparável crescer."}</small>
               </div>
             </li>
           </ul>
@@ -1006,7 +1042,7 @@ function ProductsView({ data }: { data: DashboardData }) {
       <section className="panel table-panel">
         <PanelTitle
           title="Comparação por produto"
-          subtitle={`Desempenho dos ${data.periodDays} dias selecionados contra os ${data.periodDays} dias imediatamente anteriores.`}
+          subtitle={`Desempenho dos ${data.periodDays} dias selecionados contra ${comparisonRangeText(data)}.`}
         />
         <ProductComparisonTable data={data} />
       </section>
@@ -1091,7 +1127,7 @@ function PerformanceView({ data }: { data: DashboardData }) {
         </div>
       </section>
       <section className="kpi-grid">
-        <KpiCard label="Janela de pedidos" value={`${data.periodDays} dias`} detail="Atualização móvel" icon={CalendarDays} tone="brand" />
+        <KpiCard label="Janela de pedidos" value={`${data.periodDays} dias`} detail="Período selecionado" icon={CalendarDays} tone="brand" />
         <KpiCard
           label="Visitas"
           value={data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}
@@ -1208,7 +1244,7 @@ function TrafficView({ data }: { data: DashboardData }) {
           <Eye size={26} />
         </span>
         <div>
-          <h2>Tráfego e conversão em janela móvel de {data.periodDays} dias</h2>
+          <h2>Tráfego e conversão no período selecionado de {data.periodDays} dias</h2>
           <p>
             A visão usa <code>item_visits_daily</code> cruzada com vendas no mesmo item e data.
           </p>
@@ -1316,15 +1352,37 @@ export default function Home() {
   const [period, setPeriod] = useState("30d");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dashboardData, setDashboardData] = useState<DashboardData>(FALLBACK_DASHBOARD_DATA);
+  const [datePanelOpen, setDatePanelOpen] = useState(false);
+  const [draftFilter, setDraftFilter] = useState<DateFilterDraft>(() => draftFromData(FALLBACK_DASHBOARD_DATA));
+  const [appliedFilter, setAppliedFilter] = useState<DateFilterDraft | null>(null);
+  const [filterError, setFilterError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const activeMeta = viewMeta[activeView];
   const periodDays = periodToDays(period);
+  const dashboardQuery = useMemo(() => {
+    const params = new URLSearchParams();
+
+    if (!appliedFilter) {
+      params.set("periodDays", String(periodDays));
+    } else {
+      params.set("currentStart", appliedFilter.currentStart);
+      params.set("currentEnd", appliedFilter.currentEnd);
+      params.set("comparisonMode", appliedFilter.comparisonMode);
+
+      if (appliedFilter.comparisonMode === "custom") {
+        params.set("comparisonStart", appliedFilter.comparisonStart);
+        params.set("comparisonEnd", appliedFilter.comparisonEnd);
+      }
+    }
+
+    return params.toString();
+  }, [appliedFilter, periodDays]);
 
   useEffect(() => {
     const controller = new AbortController();
 
-    fetch(`/api/dashboard?periodDays=${periodDays}`, {
+    fetch(`/api/dashboard?${dashboardQuery}`, {
       signal: controller.signal,
       cache: "no-store",
     })
@@ -1340,7 +1398,9 @@ export default function Home() {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
           setDashboardData({
             ...FALLBACK_DASHBOARD_DATA,
-            periodDays,
+            periodDays: appliedFilter
+              ? dateRangeDays(appliedFilter.currentStart, appliedFilter.currentEnd)
+              : periodDays,
             message: error instanceof Error ? error.message : "Erro ao carregar dados.",
           });
         }
@@ -1348,7 +1408,7 @@ export default function Home() {
       .finally(() => setIsRefreshing(false));
 
     return () => controller.abort();
-  }, [periodDays, refreshNonce]);
+  }, [appliedFilter, dashboardQuery, periodDays, refreshNonce]);
 
   const content = useMemo(() => {
     switch (activeView) {
@@ -1373,10 +1433,54 @@ export default function Home() {
   }
 
   function changePeriod(nextPeriod: string) {
-    if (nextPeriod !== period) {
+    if (nextPeriod !== period || appliedFilter) {
       setIsRefreshing(true);
       setPeriod(nextPeriod);
+      setAppliedFilter(null);
+      setFilterError(null);
     }
+  }
+
+  function toggleDatePanel() {
+    if (!datePanelOpen) {
+      setDraftFilter(draftFromData(dashboardData));
+      setFilterError(null);
+    }
+    setDatePanelOpen((current) => !current);
+  }
+
+  function applyDateFilter() {
+    const currentDays = dateRangeDays(draftFilter.currentStart, draftFilter.currentEnd);
+
+    if (currentDays < 1) {
+      setFilterError("No período principal, a data inicial deve ser anterior ou igual à final.");
+      return;
+    }
+
+    if (currentDays > 366) {
+      setFilterError("O período principal pode ter no máximo 366 dias.");
+      return;
+    }
+
+    if (draftFilter.comparisonMode === "custom") {
+      const comparisonDays = dateRangeDays(draftFilter.comparisonStart, draftFilter.comparisonEnd);
+
+      if (comparisonDays < 1) {
+        setFilterError("Na comparação personalizada, a data inicial deve ser anterior ou igual à final.");
+        return;
+      }
+
+      if (comparisonDays > 366) {
+        setFilterError("O período de comparação pode ter no máximo 366 dias.");
+        return;
+      }
+    }
+
+    setFilterError(null);
+    setAppliedFilter({ ...draftFilter });
+    setPeriod("custom");
+    setIsRefreshing(true);
+    setDatePanelOpen(false);
   }
 
   function refreshData() {
@@ -1444,6 +1548,14 @@ export default function Home() {
                 </button>
               ))}
             </div>
+            <button
+              className={`date-filter-button${datePanelOpen || appliedFilter ? " active" : ""}`}
+              aria-expanded={datePanelOpen}
+              aria-controls="date-filter-panel"
+              onClick={toggleDatePanel}
+            >
+              <CalendarDays size={16} /> Personalizar
+            </button>
             <button className="icon-button" title="Atualizar visualização" aria-label="Atualizar visualização" onClick={refreshData}>
               <RefreshCw size={18} className={isRefreshing ? "spin-icon" : ""} />
             </button>
@@ -1451,6 +1563,123 @@ export default function Home() {
         </header>
 
         <div className="page-content">
+          {datePanelOpen ? (
+            <section className="date-filter-panel" id="date-filter-panel" aria-label="Filtro personalizado de datas">
+              <div className="date-filter-heading">
+                <div>
+                  <span className="eyebrow">Filtro global</span>
+                  <h2>Escolha o período e a comparação</h2>
+                  <p>O mesmo recorte será aplicado às vendas, visitas, produtos e gráficos do dashboard.</p>
+                </div>
+                <button className="icon-button" aria-label="Fechar filtro de datas" onClick={() => setDatePanelOpen(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="date-filter-grid">
+                <fieldset>
+                  <legend>Período principal</legend>
+                  <div className="date-input-row">
+                    <label>
+                      Data inicial
+                      <input
+                        type="date"
+                        value={draftFilter.currentStart}
+                        min={dashboardData.availableDateRange.firstDate ?? undefined}
+                        max={dashboardData.availableDateRange.lastDate ?? undefined}
+                        onChange={(event) => setDraftFilter((current) => ({ ...current, currentStart: event.target.value }))}
+                      />
+                    </label>
+                    <label>
+                      Data final
+                      <input
+                        type="date"
+                        value={draftFilter.currentEnd}
+                        min={dashboardData.availableDateRange.firstDate ?? undefined}
+                        max={dashboardData.availableDateRange.lastDate ?? undefined}
+                        onChange={(event) => setDraftFilter((current) => ({ ...current, currentEnd: event.target.value }))}
+                      />
+                    </label>
+                  </div>
+                  <small>{dateRangeDays(draftFilter.currentStart, draftFilter.currentEnd)} dias selecionados</small>
+                </fieldset>
+
+                <fieldset>
+                  <legend>Comparar com</legend>
+                  <label>
+                    Regra de comparação
+                    <select
+                      value={draftFilter.comparisonMode}
+                      onChange={(event) => setDraftFilter((current) => ({
+                        ...current,
+                        comparisonMode: event.target.value as ComparisonMode,
+                      }))}
+                    >
+                      <option value="previousPeriod">Período imediatamente anterior</option>
+                      <option value="previousMonthEquivalent">Mesmo intervalo do mês anterior</option>
+                      <option value="previousMonthFull">Mês anterior completo</option>
+                      <option value="custom">Outro período, escolhido manualmente</option>
+                      <option value="none">Sem comparação</option>
+                    </select>
+                  </label>
+
+                  {draftFilter.comparisonMode === "custom" ? (
+                    <div className="date-input-row comparison-dates">
+                      <label>
+                        Data inicial
+                        <input
+                          type="date"
+                          value={draftFilter.comparisonStart}
+                          min={dashboardData.availableDateRange.firstDate ?? undefined}
+                          max={dashboardData.availableDateRange.lastDate ?? undefined}
+                          onChange={(event) => setDraftFilter((current) => ({ ...current, comparisonStart: event.target.value }))}
+                        />
+                      </label>
+                      <label>
+                        Data final
+                        <input
+                          type="date"
+                          value={draftFilter.comparisonEnd}
+                          min={dashboardData.availableDateRange.firstDate ?? undefined}
+                          max={dashboardData.availableDateRange.lastDate ?? undefined}
+                          onChange={(event) => setDraftFilter((current) => ({ ...current, comparisonEnd: event.target.value }))}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                </fieldset>
+              </div>
+
+              {filterError ? <div className="date-filter-alert error"><AlertTriangle size={16} /> {filterError}</div> : null}
+              {draftFilter.comparisonMode === "custom" &&
+              dateRangeDays(draftFilter.currentStart, draftFilter.currentEnd) !== dateRangeDays(draftFilter.comparisonStart, draftFilter.comparisonEnd) ? (
+                <div className="date-filter-alert warning">
+                  <AlertTriangle size={16} /> Os intervalos têm durações diferentes. Totais absolutos devem ser comparados com cautela.
+                </div>
+              ) : null}
+
+              <div className="date-filter-footnote">
+                <Database size={16} />
+                <span>
+                  Dados disponíveis: <strong>{formatDate(dashboardData.availableDateRange.firstDate)}</strong> a <strong>{formatDate(dashboardData.availableDateRange.lastDate)}</strong>.
+                  Vendas e visitas seguem a data do evento; estoque, status e cadastro mostram o estado atual do anúncio.
+                </span>
+              </div>
+              <div className="date-filter-actions">
+                <button className="secondary-button" onClick={() => setDraftFilter(draftFromData(dashboardData))}>Restaurar aplicado</button>
+                <button className="primary-button" onClick={applyDateFilter}>Aplicar período</button>
+              </div>
+            </section>
+          ) : null}
+
+          {dashboardData.dateSelection.comparisonDays > 0 &&
+          dashboardData.dateSelection.currentDays !== dashboardData.dateSelection.comparisonDays ? (
+            <div className="active-date-warning">
+              <AlertTriangle size={15} />
+              Os períodos aplicados têm {dashboardData.dateSelection.currentDays} e {dashboardData.dateSelection.comparisonDays} dias. Compare totais absolutos com cautela.
+            </div>
+          ) : null}
+
           <div className="page-title-row">
             <div>
               <p className="eyebrow">PCXpress | Mercado Livre</p>
@@ -1460,7 +1689,10 @@ export default function Home() {
             <div className="date-chip">
               <CalendarDays size={16} />
               <span>
-                Período atual vs. <strong>{periodDays} dias anteriores</strong>
+                <strong>{formatDate(dashboardData.dateSelection.currentStart)} a {formatDate(dashboardData.dateSelection.currentEnd)}</strong>
+                {dashboardData.dateSelection.comparisonDays
+                  ? ` vs. ${formatDate(dashboardData.dateSelection.comparisonStart)} a ${formatDate(dashboardData.dateSelection.comparisonEnd)}`
+                  : " · sem comparação"}
               </span>
             </div>
           </div>
