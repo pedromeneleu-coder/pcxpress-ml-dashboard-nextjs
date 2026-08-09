@@ -3,6 +3,7 @@ import {
   type CatalogRow,
   type DailyPerformancePoint,
   type DashboardData,
+  type ComparisonMode,
   type ProductComparison,
   type ProductPeriodMetrics,
   type TopProduct,
@@ -62,6 +63,17 @@ const DEFAULT_SCHEMA = "ml_dashboards";
 const PAGE_SIZE = 1000;
 const REQUEST_TIMEOUT_MS = 15000;
 
+export type DashboardDateQuery = {
+  periodDays?: number;
+  currentStart?: string;
+  currentEnd?: string;
+  comparisonMode?: ComparisonMode;
+  comparisonStart?: string;
+  comparisonEnd?: string;
+};
+
+type ResolvedDateSelection = DashboardData["dateSelection"];
+
 function readConfig(): SupabaseConfig | null {
   const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -106,6 +118,92 @@ function shiftDate(dateValue: string, days: number): string {
   const date = new Date(`${dateValue}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function inclusiveDays(firstDate: string, lastDate: string): number {
+  const first = new Date(`${firstDate}T00:00:00Z`).getTime();
+  const last = new Date(`${lastDate}T00:00:00Z`).getTime();
+  return Math.floor((last - first) / 86400000) + 1;
+}
+
+function shiftMonthClamped(dateValue: string, months: number): string {
+  const source = new Date(`${dateValue}T00:00:00Z`);
+  const targetMonth = source.getUTCMonth() + months;
+  const target = new Date(Date.UTC(source.getUTCFullYear(), targetMonth, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(source.getUTCDate(), lastDay));
+  return target.toISOString().slice(0, 10);
+}
+
+function resolveDateSelection(query: DashboardDateQuery, anchorDate: string): ResolvedDateSelection {
+  const requestedDays = query.periodDays ?? 30;
+  const currentStart = query.currentStart ?? startDateForPeriod(anchorDate, requestedDays);
+  const currentEnd = query.currentEnd ?? anchorDate;
+  const currentDays = inclusiveDays(currentStart, currentEnd);
+  const comparisonMode = query.comparisonMode ?? "previousPeriod";
+  let comparisonStart: string | null = null;
+  let comparisonEnd: string | null = null;
+  let comparisonLabel = "Sem comparação";
+
+  if (comparisonMode === "previousPeriod") {
+    comparisonEnd = shiftDate(currentStart, -1);
+    comparisonStart = startDateForPeriod(comparisonEnd, currentDays);
+    comparisonLabel = `${currentDays} dias anteriores`;
+  } else if (comparisonMode === "previousMonthEquivalent") {
+    comparisonStart = shiftMonthClamped(currentStart, -1);
+    comparisonEnd = shiftMonthClamped(currentEnd, -1);
+    comparisonLabel = "Mesmo intervalo no mês anterior";
+  } else if (comparisonMode === "previousMonthFull") {
+    const previousMonthDate = shiftMonthClamped(currentStart.slice(0, 8) + "01", -1);
+    comparisonStart = previousMonthDate.slice(0, 8) + "01";
+    const monthAfter = shiftMonthClamped(comparisonStart, 1);
+    comparisonEnd = shiftDate(monthAfter, -1);
+    comparisonLabel = "Mês anterior completo";
+  } else if (comparisonMode === "custom") {
+    comparisonStart = query.comparisonStart ?? null;
+    comparisonEnd = query.comparisonEnd ?? null;
+    comparisonLabel = "Período personalizado";
+  }
+
+  const comparisonDays = comparisonStart && comparisonEnd
+    ? inclusiveDays(comparisonStart, comparisonEnd)
+    : 0;
+
+  return {
+    currentStart,
+    currentEnd,
+    currentDays,
+    comparisonMode,
+    comparisonStart,
+    comparisonEnd,
+    comparisonDays,
+    comparisonLabel,
+  };
+}
+
+function fallbackForQuery(query: DashboardDateQuery, message?: string): DashboardData {
+  const anchorDate = query.currentEnd ?? FALLBACK_DASHBOARD_DATA.availableDateRange.lastDate ?? new Date().toISOString().slice(0, 10);
+  const dateSelection = resolveDateSelection(query, anchorDate);
+
+  return {
+    ...FALLBACK_DASHBOARD_DATA,
+    periodDays: dateSelection.currentDays,
+    message: message ?? FALLBACK_DASHBOARD_DATA.message,
+    comparison: {
+      ...FALLBACK_DASHBOARD_DATA.comparison,
+      firstDate: dateSelection.comparisonStart,
+      lastDate: dateSelection.comparisonEnd,
+      periodDays: dateSelection.comparisonDays,
+    },
+    dateSelection,
+    dailyPerformance: {
+      ...FALLBACK_DASHBOARD_DATA.dailyPerformance,
+      currentFirstDate: dateSelection.currentStart,
+      currentLastDate: dateSelection.currentEnd,
+      previousFirstDate: dateSelection.comparisonStart,
+      previousLastDate: dateSelection.comparisonEnd,
+    },
+  };
 }
 
 function share(count: number, total: number): string {
@@ -401,39 +499,51 @@ function buildProductComparisons(
     .slice(0, 50);
 }
 
-export async function getDashboardData(periodDays: number): Promise<DashboardData> {
+export async function getDashboardData(query: DashboardDateQuery = {}): Promise<DashboardData> {
   const config = readConfig();
 
   if (!config) {
-    return { ...FALLBACK_DASHBOARD_DATA, periodDays };
+    return fallbackForQuery(query);
   }
 
   try {
     const account = await getAccount(config);
 
     if (!account) {
-      return {
-        ...FALLBACK_DASHBOARD_DATA,
-        periodDays,
-        message: `Conta "${config.accountName}" não encontrada no Supabase.`,
-      };
+      return fallbackForQuery(query, `Conta "${config.accountName}" não encontrada no Supabase.`);
     }
 
     const accountFilter = `eq.${account.id}`;
-    const latestSummary = await supabaseFetch<Pick<AccountSummaryRecord, "performance_date">[]>(
-      config,
-      appendQuery("dashboard_daily_account_summary", {
-        select: "performance_date",
-        account_id: accountFilter,
-        order: "performance_date.desc",
-        limit: 1,
-      }),
-    );
+    const [latestSummary, earliestSummary] = await Promise.all([
+      supabaseFetch<Pick<AccountSummaryRecord, "performance_date">[]>(
+        config,
+        appendQuery("dashboard_daily_account_summary", {
+          select: "performance_date",
+          account_id: accountFilter,
+          order: "performance_date.desc",
+          limit: 1,
+        }),
+      ),
+      supabaseFetch<Pick<AccountSummaryRecord, "performance_date">[]>(
+        config,
+        appendQuery("dashboard_daily_account_summary", {
+          select: "performance_date",
+          account_id: accountFilter,
+          order: "performance_date.asc",
+          limit: 1,
+        }),
+      ),
+    ]);
     const anchorDate = latestSummary[0]?.performance_date ?? new Date().toISOString().slice(0, 10);
-    const fromDate = startDateForPeriod(anchorDate, periodDays);
-    const previousLastDate = shiftDate(fromDate, -1);
-    const previousFirstDate = startDateForPeriod(previousLastDate, periodDays);
-    const combinedPeriodFilter = `(performance_date.gte.${previousFirstDate},performance_date.lte.${anchorDate})`;
+    const dateSelection = resolveDateSelection(query, anchorDate);
+    const hasComparison = Boolean(dateSelection.comparisonStart && dateSelection.comparisonEnd);
+    const periodFilter: Record<string, string> = hasComparison
+      ? {
+          or: `(and(performance_date.gte.${dateSelection.currentStart},performance_date.lte.${dateSelection.currentEnd}),and(performance_date.gte.${dateSelection.comparisonStart},performance_date.lte.${dateSelection.comparisonEnd}))`,
+        }
+      : {
+          and: `(performance_date.gte.${dateSelection.currentStart},performance_date.lte.${dateSelection.currentEnd})`,
+        };
     const [catalogRecords, summaryRecords, performanceRecords] = await Promise.all([
       fetchAll<CatalogRecord>(
         config,
@@ -448,7 +558,7 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
           select:
             "performance_date,items_count,fallback_items_count,visits,units_sold,orders_count,gross_amount,paid_gross_amount,avg_ticket,conversion_rate_percent",
           account_id: accountFilter,
-          and: combinedPeriodFilter,
+          ...periodFilter,
           order: "performance_date.asc",
         }),
       ),
@@ -458,7 +568,7 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
           select:
             "performance_date,item_id,title,catalog_source,visits,units_sold,orders_count,gross_amount,conversion_rate_percent,available_quantity,status,thumbnail,permalink",
           account_id: accountFilter,
-          and: combinedPeriodFilter,
+          ...periodFilter,
         }),
       ),
     ]);
@@ -467,30 +577,46 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
       .flatMap((record) => [record.synced_at, record.last_updated])
       .filter((value): value is string => Boolean(value))
       .sort();
-    const currentSummaryRecords = summaryRecords.filter((record) => record.performance_date >= fromDate);
-    const previousSummaryRecords = summaryRecords.filter((record) => record.performance_date < fromDate);
-    const currentPerformanceRecords = performanceRecords.filter((record) => record.performance_date >= fromDate);
-    const previousPerformanceRecords = performanceRecords.filter((record) => record.performance_date < fromDate);
+    const inRange = (date: string, firstDate: string | null, lastDate: string | null) =>
+      Boolean(firstDate && lastDate && date >= firstDate && date <= lastDate);
+    const currentSummaryRecords = summaryRecords.filter((record) =>
+      inRange(record.performance_date, dateSelection.currentStart, dateSelection.currentEnd),
+    );
+    const previousSummaryRecords = summaryRecords.filter((record) =>
+      inRange(record.performance_date, dateSelection.comparisonStart, dateSelection.comparisonEnd),
+    );
+    const currentPerformanceRecords = performanceRecords.filter((record) =>
+      inRange(record.performance_date, dateSelection.currentStart, dateSelection.currentEnd),
+    );
+    const previousPerformanceRecords = performanceRecords.filter((record) =>
+      inRange(record.performance_date, dateSelection.comparisonStart, dateSelection.comparisonEnd),
+    );
 
     return {
       source: "supabase",
       connected: true,
       message: null,
       accountName: DISPLAY_ACCOUNT_NAME,
-      periodDays,
+      periodDays: dateSelection.currentDays,
       updatedAt: timestamps.at(-1) ?? null,
       catalog: buildCatalog(catalogRecords),
       sales: buildSales(currentSummaryRecords),
       comparison: {
-        firstDate: previousFirstDate,
-        lastDate: previousLastDate,
+        firstDate: dateSelection.comparisonStart,
+        lastDate: dateSelection.comparisonEnd,
+        periodDays: dateSelection.comparisonDays,
         sales: previousSummaryRecords.length ? buildSales(previousSummaryRecords) : null,
       },
+      dateSelection,
+      availableDateRange: {
+        firstDate: earliestSummary[0]?.performance_date ?? null,
+        lastDate: latestSummary[0]?.performance_date ?? null,
+      },
       dailyPerformance: {
-        currentFirstDate: fromDate,
-        currentLastDate: anchorDate,
-        previousFirstDate,
-        previousLastDate,
+        currentFirstDate: dateSelection.currentStart,
+        currentLastDate: dateSelection.currentEnd,
+        previousFirstDate: dateSelection.comparisonStart,
+        previousLastDate: dateSelection.comparisonEnd,
         current: buildDailyPerformance(currentSummaryRecords),
         previous: buildDailyPerformance(previousSummaryRecords),
       },
@@ -498,10 +624,9 @@ export async function getDashboardData(periodDays: number): Promise<DashboardDat
       productComparisons: buildProductComparisons(currentPerformanceRecords, previousPerformanceRecords),
     };
   } catch (error) {
-    return {
-      ...FALLBACK_DASHBOARD_DATA,
-      periodDays,
-      message: error instanceof Error ? error.message : "Erro desconhecido ao consultar Supabase.",
-    };
+    return fallbackForQuery(
+      query,
+      error instanceof Error ? error.message : "Erro desconhecido ao consultar Supabase.",
+    );
   }
 }
