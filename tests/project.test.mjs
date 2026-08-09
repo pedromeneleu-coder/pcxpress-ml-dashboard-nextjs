@@ -105,3 +105,13 @@ test("prioritizes the current commercial engine without inventing future metrics
   assert.doesNotMatch(overview, /ACOS|ROAS|Buy-box|Faturamento líquido|Devoluções/);
   assert.doesNotMatch(page, /Qualidade da base|QualityView|case "quality"/);
 });
+
+test("renders monetary values without abbreviated thousands or millions", async () => {
+  const page = await readFile(new URL("app/page.tsx", root), "utf8");
+
+  assert.match(page, /style: "currency"/);
+  assert.match(page, /currency: "BRL"/);
+  assert.doesNotMatch(page, /formatShortCurrency/);
+  assert.doesNotMatch(page, /\} mi`|\} mil`/);
+  assert.match(page, /metric === "grossAmount" \? formatCurrency\(value\)/);
+});
