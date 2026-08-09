@@ -116,24 +116,6 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
-function formatShortCurrency(value: number) {
-  if (value >= 1000000) {
-    return `R$ ${(value / 1000000).toLocaleString("pt-BR", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })} mi`;
-  }
-
-  if (value >= 1000) {
-    return `R$ ${(value / 1000).toLocaleString("pt-BR", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    })} mil`;
-  }
-
-  return formatCurrency(value);
-}
-
 function formatPercent(value: number | null) {
   if (value === null) {
     return "Após conexão";
@@ -205,7 +187,7 @@ const chartMetrics: { id: ChartMetricId; label: string }[] = [
 ];
 
 function formatChartValue(metric: ChartMetricId, value: number) {
-  return metric === "grossAmount" ? formatShortCurrency(value) : formatNumber(Math.round(value));
+  return metric === "grossAmount" ? formatCurrency(value) : formatNumber(Math.round(value));
 }
 
 function dayIndex(date: string, firstDate: string) {
@@ -237,10 +219,12 @@ function alignDailyValues(
   return values;
 }
 
+const CHART_LEFT = 118;
+const CHART_RIGHT = 840;
+const CHART_WIDTH = CHART_RIGHT - CHART_LEFT;
+
 function buildChartPath(values: (number | null)[], maxValue: number) {
-  const left = 72;
   const top = 20;
-  const width = 768;
   const height = 204;
   let path = "";
   let drawing = false;
@@ -251,7 +235,7 @@ function buildChartPath(values: (number | null)[], maxValue: number) {
       return;
     }
 
-    const x = left + (index / Math.max(values.length - 1, 1)) * width;
+    const x = CHART_LEFT + (index / Math.max(values.length - 1, 1)) * CHART_WIDTH;
     const y = top + height - (value / maxValue) * height;
     path += `${drawing ? " L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
     drawing = true;
@@ -290,8 +274,8 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
   const hoveredPrevious = hoveredIndex === null ? null : chart.previous[hoveredIndex];
   const hoveredPriorDay = hoveredIndex === null || hoveredIndex === 0 ? null : chart.current[hoveredIndex - 1];
   const hoveredX = hoveredIndex === null
-    ? 72
-    : 72 + (hoveredIndex / Math.max(chartDays - 1, 1)) * 768;
+    ? CHART_LEFT
+    : CHART_LEFT + (hoveredIndex / Math.max(chartDays - 1, 1)) * CHART_WIDTH;
   const tooltipX = hoveredX > 570 ? hoveredX - 258 : hoveredX + 10;
   const periodChange = getChange(hoveredCurrent, hoveredPrevious);
   const dayChange = getChange(hoveredCurrent, hoveredPriorDay);
@@ -343,20 +327,20 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
               onMouseLeave={() => setHoveredIndex(null)}
             >
             {[20, 122, 224].map((y) => (
-              <line key={y} className="chart-grid-line" x1="72" x2="840" y1={y} y2={y} />
+              <line key={y} className="chart-grid-line" x1={CHART_LEFT} x2={CHART_RIGHT} y1={y} y2={y} />
             ))}
-            <text className="chart-axis-text" x="62" y="24" textAnchor="end">
+            <text className="chart-axis-text" x={CHART_LEFT - 10} y="24" textAnchor="end">
               {formatChartValue(metric, chart.maxValue)}
             </text>
-            <text className="chart-axis-text" x="62" y="126" textAnchor="end">
+            <text className="chart-axis-text" x={CHART_LEFT - 10} y="126" textAnchor="end">
               {formatChartValue(metric, chart.maxValue / 2)}
             </text>
-            <text className="chart-axis-text" x="62" y="228" textAnchor="end">0</text>
-            <text className="chart-axis-text" x="72" y="252">Dia 1</text>
-            <text className="chart-axis-text" x="456" y="252" textAnchor="middle">
+            <text className="chart-axis-text" x={CHART_LEFT - 10} y="228" textAnchor="end">0</text>
+            <text className="chart-axis-text" x={CHART_LEFT} y="252">Dia 1</text>
+            <text className="chart-axis-text" x={(CHART_LEFT + CHART_RIGHT) / 2} y="252" textAnchor="middle">
               Dia {Math.ceil(chartDays / 2)}
             </text>
-            <text className="chart-axis-text" x="840" y="252" textAnchor="end">
+            <text className="chart-axis-text" x={CHART_RIGHT} y="252" textAnchor="end">
               Dia {chartDays}
             </text>
             <path className="trend-line previous" d={chart.previousPath} />
@@ -366,7 +350,7 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
                 <circle
                   key={`current-${index}`}
                   className="chart-point current"
-                  cx={72 + (index / Math.max(chartDays - 1, 1)) * 768}
+                  cx={CHART_LEFT + (index / Math.max(chartDays - 1, 1)) * CHART_WIDTH}
                   cy={20 + 204 - (value / chart.maxValue) * 204}
                   r={chartDays > 30 ? 1.7 : 2.8}
                 />
@@ -377,16 +361,16 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
                 <circle
                   key={`previous-${index}`}
                   className="chart-point previous"
-                  cx={72 + (index / Math.max(chartDays - 1, 1)) * 768}
+                  cx={CHART_LEFT + (index / Math.max(chartDays - 1, 1)) * CHART_WIDTH}
                   cy={20 + 204 - (value / chart.maxValue) * 204}
                   r={chartDays > 30 ? 1.7 : 2.8}
                 />
               ),
             )}
             {Array.from({ length: chartDays }, (_, index) => {
-              const step = 768 / Math.max(chartDays - 1, 1);
+              const step = CHART_WIDTH / Math.max(chartDays - 1, 1);
               const width = Math.max(step, 8);
-              const x = 72 + index * step - width / 2;
+              const x = CHART_LEFT + index * step - width / 2;
 
               return (
                 <rect
@@ -569,7 +553,7 @@ function TopProductsTable({ data }: { data: DashboardData }) {
               <td className="primary-cell">{product.title}</td>
               <td className="number-cell">{formatNumber(product.visits)}</td>
               <td className="number-cell">{formatNumber(product.unitsSold)}</td>
-              <td className="number-cell">{formatShortCurrency(product.grossAmount)}</td>
+              <td className="number-cell">{formatCurrency(product.grossAmount)}</td>
               <td className="number-cell">{formatPercent(product.conversionRatePercent)}</td>
             </tr>
           ))}
@@ -659,8 +643,8 @@ function ProductComparisonTable({ data }: { data: DashboardData }) {
                 <small>ant. {formatNumber(product.previous.unitsSold)}</small>
               </td>
               <td className="number-cell comparison-value-cell">
-                <strong>{formatShortCurrency(product.current.grossAmount)}</strong>
-                <small>ant. {formatShortCurrency(product.previous.grossAmount)}</small>
+                <strong>{formatCurrency(product.current.grossAmount)}</strong>
+                <small>ant. {formatCurrency(product.previous.grossAmount)}</small>
               </td>
               <td className="number-cell comparison-value-cell">
                 <strong>{formatTablePercent(product.current.conversionRatePercent)}</strong>
@@ -711,7 +695,7 @@ function OverviewView({ data }: { data: DashboardData }) {
       <section className="kpi-grid executive-kpis">
         <KpiCard
           label="Valor bruto"
-          value={formatShortCurrency(data.sales.grossAmount)}
+          value={formatCurrency(data.sales.grossAmount)}
           detail={`Resultado acumulado em ${data.periodDays} dias`}
           icon={CircleDollarSign}
           tone="brand"
@@ -735,7 +719,7 @@ function OverviewView({ data }: { data: DashboardData }) {
         />
         <KpiCard
           label="Ticket médio"
-          value={data.sales.avgTicket === null ? "Após conexão" : formatShortCurrency(data.sales.avgTicket)}
+          value={data.sales.avgTicket === null ? "Após conexão" : formatCurrency(data.sales.avgTicket)}
           detail="Valor bruto dividido por pedidos"
           icon={Gauge}
           tone="good"
@@ -790,7 +774,7 @@ function OverviewView({ data }: { data: DashboardData }) {
           <div className="commerce-flow-step flow-result">
             <span className="flow-icon"><CircleDollarSign size={17} /></span>
             <small>04 · Resultado</small>
-            <strong>{formatShortCurrency(data.sales.grossAmount)}</strong>
+            <strong>{formatCurrency(data.sales.grossAmount)}</strong>
             <p>Valor bruto vendido</p>
           </div>
         </div>
@@ -1177,7 +1161,7 @@ function PerformanceView({ data }: { data: DashboardData }) {
                       <td className="primary-cell">{product.title}</td>
                       <td className="number-cell">{formatNumber(product.visits)}</td>
                       <td className="number-cell">{formatNumber(product.unitsSold)}</td>
-                      <td className="number-cell">{formatShortCurrency(product.grossAmount)}</td>
+                      <td className="number-cell">{formatCurrency(product.grossAmount)}</td>
                       <td className="number-cell">{formatPercent(product.conversionRatePercent)}</td>
                     </tr>
                   ))}
