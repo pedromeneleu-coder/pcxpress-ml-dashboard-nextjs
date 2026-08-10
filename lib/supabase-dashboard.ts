@@ -1,11 +1,15 @@
 import {
   FALLBACK_DASHBOARD_DATA,
   type CatalogRow,
+  type CancellationDailyPoint,
+  type CancellationSummary,
   type DailyPerformancePoint,
   type DashboardData,
   type ComparisonMode,
   type ProductComparison,
   type ProductPeriodMetrics,
+  type SellerProfile,
+  type SellerSnapshot,
   type TopProduct,
 } from "@/app/dashboard-types";
 
@@ -48,6 +52,51 @@ type ItemPerformanceRecord = {
   status: string | null;
   thumbnail: string | null;
   permalink: string | null;
+};
+
+type SellerCurrentRecord = {
+  seller_id: number | string | null;
+  nickname: string | null;
+  reputation_real_level: string | null;
+  power_seller_status: string | null;
+  protection_end_date: string | null;
+  transactions_period: string | null;
+  synced_at: string | null;
+};
+
+type SellerSnapshotRecord = {
+  snapshot_date: string;
+  seller_id: number | string | null;
+  reputation_level_id: string | null;
+  power_seller_status: string | null;
+  transactions_total: number | string | null;
+  transactions_completed: number | string | null;
+  transactions_canceled: number | string | null;
+  rating_positive: number | string | null;
+  rating_neutral: number | string | null;
+  rating_negative: number | string | null;
+  sales_completed: number | string | null;
+  claims_rate: number | string | null;
+  claims_value: number | string | null;
+  delayed_handling_time_rate: number | string | null;
+  delayed_handling_time_value: number | string | null;
+  cancellations_rate: number | string | null;
+  cancellations_value: number | string | null;
+  synced_at: string | null;
+};
+
+type CancellationRecord = {
+  performance_date: string;
+  orders_count: number | string | null;
+  paid_orders_count: number | string | null;
+  canceled_orders_count: number | string | null;
+  gross_amount: number | string | null;
+  paid_amount: number | string | null;
+  canceled_amount: number | string | null;
+  canceled_orders_percent: number | string | null;
+  canceled_amount_percent: number | string | null;
+  average_canceled_ticket: number | string | null;
+  synced_at: string | null;
 };
 
 type SupabaseConfig = {
@@ -260,6 +309,16 @@ async function fetchAll<T>(config: SupabaseConfig, path: string): Promise<T[]> {
   }
 }
 
+async function optionalFetchAll<T>(config: SupabaseConfig, path: string): Promise<T[]> {
+  try {
+    return await fetchAll<T>(config, path);
+  } catch {
+    // A visualizacao de Seller continua disponivel enquanto a nova view SQL
+    // ainda nao foi aplicada no ambiente de producao.
+    return [];
+  }
+}
+
 function appendQuery(path: string, params: Record<string, string | number>): string {
   const urlParams = new URLSearchParams();
 
@@ -401,6 +460,106 @@ function buildDailyPerformance(records: AccountSummaryRecord[]): DailyPerformanc
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+function buildSellerProfile(record: SellerCurrentRecord | undefined): SellerProfile {
+  return {
+    sellerId: toNullableNumber(record?.seller_id),
+    nickname: record?.nickname ?? null,
+    reputationRealLevel: record?.reputation_real_level ?? null,
+    powerSellerStatus: record?.power_seller_status ?? null,
+    protectionEndDate: record?.protection_end_date ?? null,
+    transactionsPeriod: record?.transactions_period ?? null,
+    syncedAt: record?.synced_at ?? null,
+  };
+}
+
+function buildSellerSnapshot(record: SellerSnapshotRecord): SellerSnapshot {
+  return {
+    snapshotDate: record.snapshot_date,
+    sellerId: toNullableNumber(record.seller_id),
+    reputationLevelId: record.reputation_level_id,
+    powerSellerStatus: record.power_seller_status,
+    transactionsPeriod: null,
+    transactionsTotal: toNullableNumber(record.transactions_total),
+    transactionsCompleted: toNullableNumber(record.transactions_completed),
+    transactionsCanceled: toNullableNumber(record.transactions_canceled),
+    ratingPositive: toNullableNumber(record.rating_positive),
+    ratingNeutral: toNullableNumber(record.rating_neutral),
+    ratingNegative: toNullableNumber(record.rating_negative),
+    salesCompleted: toNullableNumber(record.sales_completed),
+    claimsRate: toNullableNumber(record.claims_rate),
+    claimsValue: toNullableNumber(record.claims_value),
+    delayedHandlingTimeRate: toNullableNumber(record.delayed_handling_time_rate),
+    delayedHandlingTimeValue: toNullableNumber(record.delayed_handling_time_value),
+    cancellationsRate: toNullableNumber(record.cancellations_rate),
+    cancellationsValue: toNullableNumber(record.cancellations_value),
+    syncedAt: record.synced_at,
+  };
+}
+
+function latestSnapshotInRange(
+  snapshots: SellerSnapshot[],
+  firstDate: string | null,
+  lastDate: string | null,
+): SellerSnapshot | null {
+  if (!firstDate || !lastDate) {
+    return null;
+  }
+
+  return snapshots
+    .filter((snapshot) => snapshot.snapshotDate >= firstDate && snapshot.snapshotDate <= lastDate)
+    .sort((a, b) => a.snapshotDate.localeCompare(b.snapshotDate))
+    .at(-1) ?? null;
+}
+
+function buildCancellationSummary(records: CancellationRecord[]): CancellationSummary {
+  const totals = records.reduce(
+    (acc, record) => {
+      acc.ordersCount += toNumber(record.orders_count);
+      acc.paidOrdersCount += toNumber(record.paid_orders_count);
+      acc.canceledOrdersCount += toNumber(record.canceled_orders_count);
+      acc.grossAmount += toNumber(record.gross_amount);
+      acc.paidAmount += toNumber(record.paid_amount);
+      acc.canceledAmount += toNumber(record.canceled_amount);
+      return acc;
+    },
+    {
+      ordersCount: 0,
+      paidOrdersCount: 0,
+      canceledOrdersCount: 0,
+      grossAmount: 0,
+      paidAmount: 0,
+      canceledAmount: 0,
+    },
+  );
+
+  return {
+    ...totals,
+    canceledOrdersPercent:
+      totals.ordersCount > 0 ? (totals.canceledOrdersCount / totals.ordersCount) * 100 : null,
+    canceledAmountPercent:
+      totals.grossAmount > 0 ? (totals.canceledAmount / totals.grossAmount) * 100 : null,
+    averageCanceledTicket:
+      totals.canceledOrdersCount > 0 ? totals.canceledAmount / totals.canceledOrdersCount : null,
+  };
+}
+
+function buildCancellationDaily(records: CancellationRecord[]): CancellationDailyPoint[] {
+  return records
+    .map((record) => ({
+      date: record.performance_date,
+      ordersCount: toNumber(record.orders_count),
+      paidOrdersCount: toNumber(record.paid_orders_count),
+      canceledOrdersCount: toNumber(record.canceled_orders_count),
+      grossAmount: toNumber(record.gross_amount),
+      paidAmount: toNumber(record.paid_amount),
+      canceledAmount: toNumber(record.canceled_amount),
+      canceledOrdersPercent: toNullableNumber(record.canceled_orders_percent),
+      canceledAmountPercent: toNullableNumber(record.canceled_amount_percent),
+      averageCanceledTicket: toNullableNumber(record.average_canceled_ticket),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function aggregateProducts(records: ItemPerformanceRecord[]): TopProduct[] {
   const byItem = new Map<string, TopProduct>();
 
@@ -537,6 +696,10 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
     const anchorDate = latestSummary[0]?.performance_date ?? new Date().toISOString().slice(0, 10);
     const dateSelection = resolveDateSelection(query, anchorDate);
     const hasComparison = Boolean(dateSelection.comparisonStart && dateSelection.comparisonEnd);
+    const snapshotCutoff = [dateSelection.currentEnd, dateSelection.comparisonEnd]
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) ?? dateSelection.currentEnd;
     const periodFilter: Record<string, string> = hasComparison
       ? {
           or: `(and(performance_date.gte.${dateSelection.currentStart},performance_date.lte.${dateSelection.currentEnd}),and(performance_date.gte.${dateSelection.comparisonStart},performance_date.lte.${dateSelection.comparisonEnd}))`,
@@ -544,7 +707,14 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       : {
           and: `(performance_date.gte.${dateSelection.currentStart},performance_date.lte.${dateSelection.currentEnd})`,
         };
-    const [catalogRecords, summaryRecords, performanceRecords] = await Promise.all([
+    const [
+      catalogRecords,
+      summaryRecords,
+      performanceRecords,
+      sellerCurrentRecords,
+      sellerSnapshotRecords,
+      cancellationRecords,
+    ] = await Promise.all([
       fetchAll<CatalogRecord>(
         config,
         appendQuery("dashboard_item_catalog", {
@@ -571,6 +741,36 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           ...periodFilter,
         }),
       ),
+      optionalFetchAll<SellerCurrentRecord>(
+        config,
+        appendQuery("sellers_current", {
+          select:
+            "seller_id,nickname,reputation_real_level,power_seller_status,protection_end_date,transactions_period,synced_at",
+          account_id: accountFilter,
+          order: "synced_at.desc",
+          limit: 1,
+        }),
+      ),
+      optionalFetchAll<SellerSnapshotRecord>(
+        config,
+        appendQuery("seller_daily_snapshots", {
+          select:
+            "snapshot_date,seller_id,reputation_level_id,power_seller_status,transactions_total,transactions_completed,transactions_canceled,rating_positive,rating_neutral,rating_negative,sales_completed,claims_rate,claims_value,delayed_handling_time_rate,delayed_handling_time_value,cancellations_rate,cancellations_value,synced_at",
+          account_id: accountFilter,
+          snapshot_date: `lte.${snapshotCutoff}`,
+          order: "snapshot_date.asc",
+        }),
+      ),
+      optionalFetchAll<CancellationRecord>(
+        config,
+        appendQuery("dashboard_daily_order_impact", {
+          select:
+            "performance_date,orders_count,paid_orders_count,canceled_orders_count,gross_amount,paid_amount,canceled_amount,canceled_orders_percent,canceled_amount_percent,average_canceled_ticket,synced_at",
+          account_id: accountFilter,
+          ...periodFilter,
+          order: "performance_date.asc",
+        }),
+      ),
     ]);
 
     const timestamps = catalogRecords
@@ -589,6 +789,16 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       inRange(record.performance_date, dateSelection.currentStart, dateSelection.currentEnd),
     );
     const previousPerformanceRecords = performanceRecords.filter((record) =>
+      inRange(record.performance_date, dateSelection.comparisonStart, dateSelection.comparisonEnd),
+    );
+    const sellerSnapshots = sellerSnapshotRecords.map(buildSellerSnapshot);
+    const currentSellerSnapshots = sellerSnapshots.filter((snapshot) =>
+      inRange(snapshot.snapshotDate, dateSelection.currentStart, dateSelection.currentEnd),
+    );
+    const currentCancellationRecords = cancellationRecords.filter((record) =>
+      inRange(record.performance_date, dateSelection.currentStart, dateSelection.currentEnd),
+    );
+    const previousCancellationRecords = cancellationRecords.filter((record) =>
       inRange(record.performance_date, dateSelection.comparisonStart, dateSelection.comparisonEnd),
     );
 
@@ -622,6 +832,29 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       },
       topProducts: buildTopProducts(currentPerformanceRecords),
       productComparisons: buildProductComparisons(currentPerformanceRecords, previousPerformanceRecords),
+      sellerHealth: {
+        profile: buildSellerProfile(sellerCurrentRecords[0]),
+        currentSnapshot: latestSnapshotInRange(
+          sellerSnapshots,
+          dateSelection.currentStart,
+          dateSelection.currentEnd,
+        ),
+        comparisonSnapshot: latestSnapshotInRange(
+          sellerSnapshots,
+          dateSelection.comparisonStart,
+          dateSelection.comparisonEnd,
+        ),
+        history: currentSellerSnapshots,
+        availableSnapshotDays: sellerSnapshots.length,
+      },
+      cancellations: {
+        current: buildCancellationSummary(currentCancellationRecords),
+        comparison: previousCancellationRecords.length
+          ? buildCancellationSummary(previousCancellationRecords)
+          : null,
+        dailyCurrent: buildCancellationDaily(currentCancellationRecords),
+        dailyComparison: buildCancellationDaily(previousCancellationRecords),
+      },
     };
   } catch (error) {
     return fallbackForQuery(
