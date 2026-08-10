@@ -73,6 +73,54 @@ export type DailyPerformancePoint = {
   conversionRatePercent: number | null;
 };
 
+export type SellerProfile = {
+  sellerId: number | null;
+  nickname: string | null;
+  reputationRealLevel: string | null;
+  powerSellerStatus: string | null;
+  protectionEndDate: string | null;
+  transactionsPeriod: string | null;
+  syncedAt: string | null;
+};
+
+export type SellerSnapshot = {
+  snapshotDate: string;
+  sellerId: number | null;
+  reputationLevelId: string | null;
+  powerSellerStatus: string | null;
+  transactionsPeriod: string | null;
+  transactionsTotal: number | null;
+  transactionsCompleted: number | null;
+  transactionsCanceled: number | null;
+  ratingPositive: number | null;
+  ratingNeutral: number | null;
+  ratingNegative: number | null;
+  salesCompleted: number | null;
+  claimsRate: number | null;
+  claimsValue: number | null;
+  delayedHandlingTimeRate: number | null;
+  delayedHandlingTimeValue: number | null;
+  cancellationsRate: number | null;
+  cancellationsValue: number | null;
+  syncedAt: string | null;
+};
+
+export type CancellationSummary = {
+  ordersCount: number;
+  paidOrdersCount: number;
+  canceledOrdersCount: number;
+  grossAmount: number;
+  paidAmount: number;
+  canceledAmount: number;
+  canceledOrdersPercent: number | null;
+  canceledAmountPercent: number | null;
+  averageCanceledTicket: number | null;
+};
+
+export type CancellationDailyPoint = CancellationSummary & {
+  date: string;
+};
+
 export type DashboardData = {
   source: "supabase" | "fallback";
   connected: boolean;
@@ -120,6 +168,19 @@ export type DashboardData = {
   };
   topProducts: TopProduct[];
   productComparisons: ProductComparison[];
+  sellerHealth: {
+    profile: SellerProfile;
+    currentSnapshot: SellerSnapshot | null;
+    comparisonSnapshot: SellerSnapshot | null;
+    history: SellerSnapshot[];
+    availableSnapshotDays: number;
+  };
+  cancellations: {
+    current: CancellationSummary;
+    comparison: CancellationSummary | null;
+    dailyCurrent: CancellationDailyPoint[];
+    dailyComparison: CancellationDailyPoint[];
+  };
 };
 
 export const FALLBACK_DASHBOARD_DATA: DashboardData = {
@@ -196,4 +257,35 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
   },
   topProducts: [],
   productComparisons: [],
+  sellerHealth: {
+    profile: {
+      sellerId: null,
+      nickname: null,
+      reputationRealLevel: null,
+      powerSellerStatus: null,
+      protectionEndDate: null,
+      transactionsPeriod: null,
+      syncedAt: null,
+    },
+    currentSnapshot: null,
+    comparisonSnapshot: null,
+    history: [],
+    availableSnapshotDays: 0,
+  },
+  cancellations: {
+    current: {
+      ordersCount: 0,
+      paidOrdersCount: 0,
+      canceledOrdersCount: 0,
+      grossAmount: 0,
+      paidAmount: 0,
+      canceledAmount: 0,
+      canceledOrdersPercent: null,
+      canceledAmountPercent: null,
+      averageCanceledTicket: null,
+    },
+    comparison: null,
+    dailyCurrent: [],
+    dailyComparison: [],
+  },
 };
