@@ -115,3 +115,21 @@ test("renders monetary values without abbreviated thousands or millions", async 
   assert.doesNotMatch(page, /\} mi`|\} mil`/);
   assert.match(page, /metric === "grossAmount" \? formatCurrency\(value\)/);
 });
+
+test("renders Seller snapshots and calculates cancellations from order-level data", async () => {
+  const [dataSource, types, page, cancellationView] = await Promise.all([
+    readFile(new URL("lib/supabase-dashboard.ts", root), "utf8"),
+    readFile(new URL("app/dashboard-types.ts", root), "utf8"),
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("../supabase-seller-health-cancellations.sql", root), "utf8"),
+  ]);
+
+  assert.match(dataSource, /dashboard_daily_order_impact/);
+  assert.match(dataSource, /seller_daily_snapshots/);
+  assert.match(types, /export type SellerSnapshot/);
+  assert.match(types, /export type CancellationSummary/);
+  assert.match(page, /Cancelamentos por dia/);
+  assert.match(page, /Histórico de snapshots disponíveis/);
+  assert.match(cancellationView, /create or replace view ml_dashboards\.dashboard_daily_order_impact/);
+  assert.match(cancellationView, /count\(\*\) filter \(where o\.status in \('cancelled', 'canceled'\)\)/);
+});
