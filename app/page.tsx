@@ -139,6 +139,48 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 }
 
+function formatSellerRate(value: number | null) {
+  return value === null ? "—" : formatPercent(value * 100);
+}
+
+function formatSnapshotValue(value: number | null) {
+  return value === null ? "—" : formatNumber(value);
+}
+
+function reputationLabel(value: string | null) {
+  if (!value) return "Sem snapshot";
+
+  const labels: Record<string, string> = {
+    "5_green": "5 verde",
+    "4_light_green": "4 verde-claro",
+    "3_yellow": "3 amarelo",
+    "2_orange": "2 laranja",
+    "1_red": "1 vermelho",
+  };
+
+  return labels[value] ?? value.replaceAll("_", " ");
+}
+
+function snapshotDeltaText(
+  current: number | null,
+  previous: number | null,
+  previousDate: string | null,
+) {
+  if (current === null || previous === null || !previousDate) {
+    return "Sem snapshot de comparação";
+  }
+
+  const difference = (current - previous) * 100;
+  if (difference === 0) {
+    return `Sem alteração vs. ${formatDate(previousDate)}`;
+  }
+
+  return `${difference > 0 ? "+" : "−"}${Math.abs(difference).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} p.p. vs. ${formatDate(previousDate)}`;
+}
+
 function comparisonRangeText(data: DashboardData) {
   if (!data.comparison.periodDays) return "sem período de comparação";
   return `${formatDate(data.comparison.firstDate)} a ${formatDate(data.comparison.lastDate)} (${data.comparison.periodDays} dias)`;
@@ -1299,7 +1341,44 @@ function TrafficView({ data }: { data: DashboardData }) {
   );
 }
 
+function CancellationTrend({ data }: { data: DashboardData }) {
+  const points = data.cancellations.dailyCurrent;
+  const maxCanceledOrders = Math.max(...points.map((point) => point.canceledOrdersCount), 1);
+
+  if (!points.length) {
+    return <div className="chart-empty-state">Ainda não há pedidos no período selecionado.</div>;
+  }
+
+  return (
+    <div className="cancellation-chart" role="img" aria-label="Cancelamentos por dia">
+      {points.map((point) => {
+        const height = (point.canceledOrdersCount / maxCanceledOrders) * 100;
+        return (
+          <div
+            className="cancellation-bar-column"
+            key={point.date}
+            title={`${formatDate(point.date)}: ${point.canceledOrdersCount} cancelamentos`}
+          >
+            <strong>{formatNumber(point.canceledOrdersCount)}</strong>
+            <div className="cancellation-bar-track">
+              <span style={{ height: `${height}%` }} />
+            </div>
+            <small>{formatDate(point.date).slice(0, 5)}</small>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SellerView({ data }: { data: DashboardData }) {
+  const { profile, currentSnapshot, comparisonSnapshot, history, availableSnapshotDays } = data.sellerHealth;
+  const cancellations = data.cancellations.current;
+  const previousCancellations = data.cancellations.comparison;
+  const sellerName = profile.nickname ?? data.accountName;
+  const snapshotDate = currentSnapshot?.snapshotDate ?? null;
+  const protectionDate = profile.protectionEndDate?.slice(0, 10) ?? null;
+
   return (
     <>
       <section className="seller-header panel">
@@ -1308,24 +1387,152 @@ function SellerView({ data }: { data: DashboardData }) {
         </div>
         <div>
           <span>Conta Mercado Livre</span>
-          <h2>{data.accountName}</h2>
-          <p>Snapshot diário para acompanhar reputação e qualidade operacional.</p>
+          <h2>{sellerName}</h2>
+          <p>
+            {snapshotDate
+              ? `Snapshot selecionado: ${formatDate(snapshotDate)} · ${availableSnapshotDays} dia(s) registrados.`
+              : "Ainda não há snapshot do Seller no período selecionado."}
+          </p>
         </div>
-        <span className="status-badge status-good">{data.connected ? "Supabase ativo" : "Conta ativa"}</span>
+        <span className="status-badge status-good">
+          {currentSnapshot?.powerSellerStatus ?? profile.powerSellerStatus ?? "Seller ativo"}
+        </span>
       </section>
-      <section className="kpi-grid muted-kpis">
-        <KpiCard label="Reputação" value="-" detail="Último snapshot do seller" icon={ShieldCheck} tone="brand" />
-        <KpiCard label="Cancelamentos" value="-" detail="Evolução por período" icon={X} />
-        <KpiCard label="Reclamações" value="-" detail="Evolução por período" icon={Users} />
-        <KpiCard label="Atrasos" value="-" detail="Evolução por período" icon={Activity} />
+
+      <section className="kpi-grid">
+        <KpiCard
+          label="Reputação"
+          value={reputationLabel(currentSnapshot?.reputationLevelId ?? null)}
+          detail={snapshotDate ? `Snapshot de ${formatDate(snapshotDate)}` : "Sem snapshot no período"}
+          icon={ShieldCheck}
+          tone="brand"
+        />
+        <KpiCard
+          label="Reclamações ML"
+          value={formatSellerRate(currentSnapshot?.claimsRate ?? null)}
+          detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.claimsValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.claimsRate, comparisonSnapshot?.claimsRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Sem snapshot no período"}
+          icon={Users}
+          tone="warning"
+        />
+        <KpiCard
+          label="Atrasos ML"
+          value={formatSellerRate(currentSnapshot?.delayedHandlingTimeRate ?? null)}
+          detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.delayedHandlingTimeValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.delayedHandlingTimeRate, comparisonSnapshot?.delayedHandlingTimeRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Sem snapshot no período"}
+          icon={Activity}
+          tone="warning"
+        />
+        <KpiCard
+          label="Cancelamentos ML"
+          value={formatSellerRate(currentSnapshot?.cancellationsRate ?? null)}
+          detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.cancellationsValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.cancellationsRate, comparisonSnapshot?.cancellationsRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Métrica oficial do Seller"}
+          icon={X}
+          tone="warning"
+        />
       </section>
-      <section className="panel">
-        <PanelTitle title="Linha de acompanhamento" subtitle="A série diária mostrará mudança, tendência e alertas de reputação." />
-        <div className="timeline-placeholder">
-          {[28, 35, 31, 48, 42, 58, 62, 60, 72, 68, 76, 82].map((height, index) => (
-            <span key={index} style={{ height: `${height}%` }} />
-          ))}
+
+      <div className="context-banner seller-context-banner">
+        <div>
+          <AlertTriangle size={16} />
+          <span>
+            <strong>Leituras diferentes:</strong> “Cancelamentos ML” é a métrica móvel do Mercado Livre; abaixo, o impacto é calculado pelos pedidos cancelados no período.
+          </span>
         </div>
+      </div>
+
+      <section className="kpi-grid">
+        <KpiCard
+          label="Pedidos cancelados"
+          value={formatNumber(cancellations.canceledOrdersCount)}
+          detail={cancellations.canceledOrdersPercent === null ? "Sem pedidos no período" : `${formatPercent(cancellations.canceledOrdersPercent)} dos ${formatNumber(cancellations.ordersCount)} pedidos criados`}
+          icon={X}
+          tone="warning"
+        />
+        <KpiCard
+          label="Valor bruto cancelado"
+          value={formatCurrency(cancellations.canceledAmount)}
+          detail="Soma do valor original dos pedidos cancelados"
+          icon={CircleDollarSign}
+          tone="warning"
+        />
+        <KpiCard
+          label="Impacto sobre o valor"
+          value={formatTablePercent(cancellations.canceledAmountPercent)}
+          detail={`De ${formatCurrency(cancellations.grossAmount)} em pedidos criados`}
+          icon={Gauge}
+          tone="warning"
+        />
+        <KpiCard
+          label="Ticket cancelado"
+          value={cancellations.averageCanceledTicket === null ? "—" : formatCurrency(cancellations.averageCanceledTicket)}
+          detail={previousCancellations ? `Comparação: ${formatNumber(previousCancellations.canceledOrdersCount)} cancelamentos no período anterior` : "Sem base de comparação"}
+          icon={ShoppingBag}
+          tone="neutral"
+        />
+      </section>
+
+      <section className="content-grid equal">
+        <article className="panel">
+          <PanelTitle
+            title="Cancelamentos por dia"
+            subtitle="Quantidade de pedidos cancelados na janela principal do filtro."
+          />
+          <CancellationTrend data={data} />
+        </article>
+        <article className="panel">
+          <PanelTitle
+            title="Snapshot do Seller"
+            subtitle={profile.transactionsPeriod ? `Janela informada pelo Mercado Livre: ${profile.transactionsPeriod}.` : "Métricas oficiais retornadas pela API do Mercado Livre."}
+          />
+          <dl className="seller-snapshot-grid">
+            <div><dt>Transações</dt><dd>{formatSnapshotValue(currentSnapshot?.transactionsTotal ?? null)}</dd></div>
+            <div><dt>Concluídas</dt><dd>{formatSnapshotValue(currentSnapshot?.transactionsCompleted ?? null)}</dd></div>
+            <div><dt>Canceladas</dt><dd>{formatSnapshotValue(currentSnapshot?.transactionsCanceled ?? null)}</dd></div>
+            <div><dt>Vendas concluídas</dt><dd>{formatSnapshotValue(currentSnapshot?.salesCompleted ?? null)}</dd></div>
+            <div><dt>Avaliações positivas</dt><dd>{formatSellerRate(currentSnapshot?.ratingPositive ?? null)}</dd></div>
+            <div><dt>Avaliações neutras</dt><dd>{formatSellerRate(currentSnapshot?.ratingNeutral ?? null)}</dd></div>
+            <div><dt>Avaliações negativas</dt><dd>{formatSellerRate(currentSnapshot?.ratingNegative ?? null)}</dd></div>
+            <div><dt>Proteção até</dt><dd>{protectionDate ? formatDate(protectionDate) : "—"}</dd></div>
+          </dl>
+        </article>
+      </section>
+
+      <section className="panel table-panel">
+        <PanelTitle
+          title="Histórico de snapshots disponíveis"
+          subtitle="Somente dias realmente coletados pelo n8n; não preenchemos lacunas com estimativas."
+        />
+        {history.length ? (
+          <div className="table-wrap">
+            <table className="seller-history-table">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Reputação</th>
+                  <th>Power Seller</th>
+                  <th className="number-cell">Reclamações</th>
+                  <th className="number-cell">Atrasos</th>
+                  <th className="number-cell">Cancelamentos ML</th>
+                  <th className="number-cell">Vendas concluídas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...history].reverse().map((snapshot) => (
+                  <tr key={snapshot.snapshotDate}>
+                    <td className="primary-cell">{formatDate(snapshot.snapshotDate)}</td>
+                    <td>{reputationLabel(snapshot.reputationLevelId)}</td>
+                    <td>{snapshot.powerSellerStatus ?? "—"}</td>
+                    <td className="number-cell">{formatSellerRate(snapshot.claimsRate)}</td>
+                    <td className="number-cell">{formatSellerRate(snapshot.delayedHandlingTimeRate)}</td>
+                    <td className="number-cell">{formatSellerRate(snapshot.cancellationsRate)}</td>
+                    <td className="number-cell">{formatSnapshotValue(snapshot.salesCompleted)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="empty-table-message">Não há snapshots no período selecionado.</p>
+        )}
       </section>
     </>
   );
