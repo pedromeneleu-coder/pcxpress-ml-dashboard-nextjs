@@ -133,27 +133,41 @@ button { letter-spacing: 0; }
 .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; margin-bottom: 16px; }
 .kpi-grid.executive-kpis { grid-template-columns: 1.25fr repeat(3, minmax(0,1fr)); }
 .kpi-card { background: white; border: 1px solid var(--line); border-radius: 7px; padding: 17px 18px 16px; min-height: 154px; position: relative; overflow: hidden; }
-.kpi-card::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #dfe4e8; }
+/* A barra inferior é o sinal principal: cinza quase invisível quando o indicador
+   não tem julgamento, saturada quando está claramente bom ou ruim. */
+.kpi-card::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #e8ecee; }
 .kpi-brand::after { background: var(--brand); }
 .kpi-good::after { background: var(--green); }
-.kpi-warning::after { background: var(--amber); }
+.kpi-attention::after { background: var(--amber); }
+.kpi-bad::after { background: var(--red); }
 .kpi-topline { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11px; font-weight: 700; }
 .icon-box { width: 31px; height: 31px; border-radius: 5px; background: #f1f4f5; display: grid; place-items: center; color: #5b6870; }
 .kpi-brand .icon-box { color: #007f99; background: #e4faff; }
 .kpi-good .icon-box { color: #087b5d; background: #e9f8f3; }
-.kpi-warning .icon-box { color: #a76c06; background: #fff7e8; }
+.kpi-attention .icon-box { color: #a76c06; background: #fff7e8; }
+.kpi-bad .icon-box { color: #ad3434; background: #fcecec; }
 .kpi-card > strong { display: block; margin-top: 10px; font-size: 24px; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .kpi-card > small { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .comparison-indicator { width: fit-content; min-height: 20px; margin-top: 8px; padding: 3px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.comparison-up { color: #087b5d; background: #e9f8f3; }
-.comparison-down { color: #ad3434; background: #fcecec; }
+/* A seta indica o fato (subiu/caiu); a cor indica o julgamento. Num
+   cancelamento em alta isso vira seta para cima com badge vermelho. */
+.comparison-good { color: #087b5d; background: #e9f8f3; }
+.comparison-bad { color: #ad3434; background: #fcecec; }
+.comparison-attention { color: #9a6200; background: #fff4df; }
 .comparison-neutral { color: #657078; background: #eef1f2; }
 .comparison-compact { min-height: auto; margin-top: 0; padding: 0; background: transparent; font-size: 8px; }
 .kpi-featured { background: #07090a; border-color: #07090a; color: white; }
-.kpi-featured::after { background: var(--brand); }
+.kpi-featured.kpi-neutral::after, .kpi-featured.kpi-brand::after { background: var(--brand); }
 .kpi-featured .kpi-topline, .kpi-featured > small { color: #aeb8bd; }
 .kpi-featured .icon-box { color: var(--brand); background: #10282d; }
 .kpi-featured > strong { font-size: 29px; }
+/* Sobre o card preto as mesmas cores precisam clarear para manter contraste. */
+.kpi-featured.kpi-good .icon-box { color: #47d7ac; background: #10312a; }
+.kpi-featured.kpi-bad .icon-box { color: #ff8b8b; background: #341c1c; }
+.kpi-featured.kpi-attention .icon-box { color: #f2b445; background: #322813; }
+.kpi-featured .comparison-good { color: #47d7ac; background: #10312a; }
+.kpi-featured .comparison-bad { color: #ff8b8b; background: #341c1c; }
+.kpi-featured .comparison-attention { color: #f2b445; background: #322813; }
 .kpi-featured .comparison-neutral { color: #bac4c8; background: #20262a; }
 
 .content-grid { display: grid; gap: 16px; margin-bottom: 16px; }
@@ -192,17 +206,23 @@ button { letter-spacing: 0; }
 .chart-tooltip-title { fill: white; font-size: 10px; font-weight: 800; }
 .chart-tooltip-text { fill: #c4ccd0; font-size: 8.5px; font-weight: 600; }
 .chart-tooltip-change { font-size: 8.5px; font-weight: 800; }
-.chart-tooltip-change.up { fill: #47d7ac; }
-.chart-tooltip-change.down { fill: #ff8b8b; }
+.chart-tooltip-change.good { fill: #47d7ac; }
+.chart-tooltip-change.bad { fill: #ff8b8b; }
+.chart-tooltip-change.attention { fill: #f2b445; }
 .chart-tooltip-change.neutral { fill: #b7c0c4; }
 .chart-empty-state { min-height: 180px; border: 1px dashed #cfd6da; border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 10px; text-align: center; padding: 20px; }
 .commerce-flow-panel { margin-bottom: 16px; }
 .commerce-flow { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); align-items: stretch; gap: 10px; }
-.commerce-flow-step { position: relative; min-height: 116px; padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: #f9fbfb; }
+.commerce-flow-step { position: relative; min-height: 142px; padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: #f9fbfb; }
 .commerce-flow-step .flow-icon { position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 5px; color: #087f99; background: #e4faff; }
 .commerce-flow-step small { display: block; color: #718087; font-size: 8px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
 .commerce-flow-step strong { display: block; margin-top: 18px; max-width: calc(100% - 34px); font-size: 20px; font-variant-numeric: tabular-nums; }
 .commerce-flow-step p { margin: 6px 0 0; color: var(--muted); font-size: 9px; }
+.commerce-flow-step .comparison-indicator { margin-top: 9px; }
+.commerce-flow-step.flow-result .comparison-good { color: #47d7ac; }
+.commerce-flow-step.flow-result .comparison-bad { color: #ff8b8b; }
+.commerce-flow-step.flow-result .comparison-attention { color: #f2b445; }
+.commerce-flow-step.flow-result .comparison-neutral { color: #aeb8bd; }
 .commerce-flow-step.flow-result { color: white; border-color: #07090a; background: #07090a; }
 .commerce-flow-step.flow-result small, .commerce-flow-step.flow-result p { color: #aeb8bd; }
 .commerce-flow-step.flow-result .flow-icon { color: #d69216; background: #2d2415; }
@@ -250,8 +270,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .product-name-cell small, .comparison-value-cell small { margin-top: 3px; color: var(--muted); font-size: 8px; font-weight: 600; }
 .comparison-value-cell strong { color: var(--ink); font-size: 10px; }
 .product-variation { min-width: 68px; width: fit-content; min-height: 23px; padding: 4px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 800; white-space: nowrap; }
-.variation-up { color: #087b5d; background: #e9f8f3; }
-.variation-down { color: #ad3434; background: #fcecec; }
+.variation-good { color: #087b5d; background: #e9f8f3; }
+.variation-bad { color: #ad3434; background: #fcecec; }
+.variation-attention { color: #9a6200; background: #fff4df; }
 .variation-neutral { color: #657078; background: #eef1f2; }
 .rank-cell { min-width: 82px; display: flex; flex-direction: column; gap: 3px; }
 .rank-cell strong { color: var(--ink); font-size: 10px; }

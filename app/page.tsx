@@ -35,6 +35,15 @@ import {
   type DailyPerformancePoint,
   type DashboardData,
 } from "./dashboard-types";
+import {
+  SELLER_RATE_THRESHOLDS,
+  evaluateRate,
+  evaluateRateFraction,
+  evaluateTrend,
+  reputationSignal,
+  type MetricDirection,
+  type SignalTone,
+} from "./metric-signals";
 
 type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "seller";
 
@@ -196,27 +205,22 @@ function shiftIsoDate(value: string | null, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
-function getChange(current: number | null | undefined, previous: number | null | undefined) {
-  if (current === null || current === undefined || previous === null || previous === undefined) {
-    return { label: "Sem base", direction: "neutral" as const };
+function getChange(
+  current: number | null | undefined,
+  previous: number | null | undefined,
+  direction: MetricDirection = "higherIsBetter",
+) {
+  const trend = evaluateTrend(current, previous, direction);
+
+  if (trend.label === "Sem base anterior") {
+    return { label: "Sem base", tone: trend.tone, arrow: trend.arrow };
   }
 
-  if (previous === 0) {
-    return current > 0
-      ? { label: "Novo", direction: "up" as const }
-      : { label: "0,0%", direction: "neutral" as const };
-  }
+  const sign = trend.changePercent === null || trend.changePercent === 0
+    ? ""
+    : trend.changePercent > 0 ? "+" : "-";
 
-  const change = ((current - previous) / Math.abs(previous)) * 100;
-  const formatted = Math.abs(change).toLocaleString("pt-BR", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  });
-
-  return {
-    label: `${change > 0 ? "+" : change < 0 ? "-" : ""}${formatted}%`,
-    direction: change > 0 ? "up" as const : change < 0 ? "down" as const : "neutral" as const,
-  };
+  return { label: `${sign}${trend.label}`, tone: trend.tone, arrow: trend.arrow };
 }
 
 type ChartMetricId = "grossAmount" | "ordersCount" | "unitsSold" | "visits";
@@ -455,10 +459,10 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
                 <text className="chart-tooltip-text" x={tooltipX + 12} y="82">
                   Anterior ({formatDate(hoveredIndex < data.comparison.periodDays ? shiftIsoDate(data.dailyPerformance.previousFirstDate, hoveredIndex) : null)}): {hoveredPrevious === null || hoveredPrevious === undefined ? "Sem dado" : formatChartValue(metric, hoveredPrevious)}
                 </text>
-                <text className={`chart-tooltip-change ${periodChange.direction}`} x={tooltipX + 12} y="101">
+                <text className={`chart-tooltip-change ${periodChange.tone}`} x={tooltipX + 12} y="101">
                   Vs. período anterior: {periodChange.label}
                 </text>
-                <text className={`chart-tooltip-change ${dayChange.direction}`} x={tooltipX + 12} y="118">
+                <text className={`chart-tooltip-change ${dayChange.tone}`} x={tooltipX + 12} y="118">
                   Vs. dia anterior: {dayChange.label}
                 </text>
               </g>
@@ -480,42 +484,36 @@ type ComparisonMetric = {
   current: number | null;
   previous: number | null;
   periodDays: number;
+  /** Em cancelamentos e reclamações, cair é bom: a cor inverte, a seta não. */
+  direction?: MetricDirection;
 };
 
-function ComparisonIndicator({ current, previous, periodDays, compact = false }: ComparisonMetric & { compact?: boolean }) {
-  if (current === null || previous === null) {
-    return (
-      <span className={`comparison-indicator comparison-neutral${compact ? " comparison-compact" : ""}`}>
-        <Minus size={13} /> Sem base anterior
-      </span>
-    );
-  }
+const toneDescription: Record<SignalTone, string> = {
+  good: "resultado positivo",
+  bad: "resultado negativo",
+  attention: "exige atenção",
+  neutral: "variação pequena, tratada como estável",
+};
 
-  if (previous === 0) {
-    const hasGrowth = current > 0;
-
-    return (
-      <span className={`comparison-indicator comparison-${hasGrowth ? "up" : "neutral"}${compact ? " comparison-compact" : ""}`}>
-        {hasGrowth ? <ArrowUpRight size={13} /> : <Minus size={13} />}
-        {hasGrowth ? "Novo vs. período anterior" : "Sem variação vs. período anterior"}
-      </span>
-    );
-  }
-
-  const changePercent = ((current - previous) / Math.abs(previous)) * 100;
-  const direction = changePercent > 0 ? "up" : changePercent < 0 ? "down" : "neutral";
-  const Icon = direction === "up" ? ArrowUpRight : direction === "down" ? ArrowDownRight : Minus;
-  const formattedChange = Math.abs(changePercent).toLocaleString("pt-BR", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  });
+function ComparisonIndicator({
+  current,
+  previous,
+  periodDays,
+  direction = "higherIsBetter",
+  compact = false,
+}: ComparisonMetric & { compact?: boolean }) {
+  const trend = evaluateTrend(current, previous, direction);
+  const Icon = trend.arrow === "up" ? ArrowUpRight : trend.arrow === "down" ? ArrowDownRight : Minus;
+  const text = trend.label === "Sem base anterior"
+    ? trend.label
+    : `${trend.label} vs. período anterior`;
 
   return (
     <span
-      className={`comparison-indicator comparison-${direction}${compact ? " comparison-compact" : ""}`}
-      title={`Período principal: ${periodDays} dias; comparação conforme o filtro global`}
+      className={`comparison-indicator comparison-${trend.tone}${compact ? " comparison-compact" : ""}`}
+      title={`${text} — ${toneDescription[trend.tone]}. Período principal: ${periodDays} dias; comparação conforme o filtro global.`}
     >
-      <Icon size={13} /> {formattedChange}% vs. período anterior
+      <Icon size={13} /> {text}
     </span>
   );
 }
@@ -525,7 +523,7 @@ function KpiCard({
   value,
   detail,
   icon: Icon,
-  tone = "neutral",
+  tone,
   comparison,
   featured = false,
 }: {
@@ -533,12 +531,18 @@ function KpiCard({
   value: string;
   detail: string;
   icon: typeof Activity;
-  tone?: "neutral" | "good" | "warning" | "brand";
+  /** Sem tone explícito, a cor nasce do próprio desempenho do indicador. */
+  tone?: SignalTone | "brand";
   comparison?: ComparisonMetric;
   featured?: boolean;
 }) {
+  const derivedTone = comparison
+    ? evaluateTrend(comparison.current, comparison.previous, comparison.direction).tone
+    : "neutral";
+  const resolvedTone = tone ?? derivedTone;
+
   return (
-    <article className={`kpi-card kpi-${tone}${featured ? " kpi-featured" : ""}`}>
+    <article className={`kpi-card kpi-${resolvedTone}${featured ? " kpi-featured" : ""}`}>
       <div className="kpi-topline">
         <span>{label}</span>
         <span className="icon-box" aria-hidden="true">
@@ -607,10 +611,10 @@ function TopProductsTable({ data }: { data: DashboardData }) {
 
 function ProductVariation({ current, previous }: { current: number; previous: number }) {
   const change = getChange(current, previous);
-  const Icon = change.direction === "up" ? ArrowUpRight : change.direction === "down" ? ArrowDownRight : Minus;
+  const Icon = change.arrow === "up" ? ArrowUpRight : change.arrow === "down" ? ArrowDownRight : Minus;
 
   return (
-    <span className={`product-variation variation-${change.direction}`}>
+    <span className={`product-variation variation-${change.tone}`}>
       <Icon size={13} /> {change.label}
     </span>
   );
@@ -740,7 +744,6 @@ function OverviewView({ data }: { data: DashboardData }) {
           value={formatCurrency(data.sales.grossAmount)}
           detail={`Resultado acumulado em ${data.periodDays} dias`}
           icon={CircleDollarSign}
-          tone="brand"
           featured
           comparison={{
             current: data.sales.grossAmount,
@@ -764,7 +767,6 @@ function OverviewView({ data }: { data: DashboardData }) {
           value={data.sales.avgTicket === null ? "Após conexão" : formatCurrency(data.sales.avgTicket)}
           detail="Valor bruto dividido por pedidos"
           icon={Gauge}
-          tone="good"
           comparison={{
             current: data.sales.avgTicket,
             previous: data.comparison.sales?.avgTicket ?? null,
@@ -776,7 +778,6 @@ function OverviewView({ data }: { data: DashboardData }) {
           value={formatNumber(data.sales.unitsSold)}
           detail={unitsPerOrder === null ? "Sem pedidos no período" : `${unitsPerOrder.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} por pedido`}
           icon={TrendingUp}
-          tone="warning"
           comparison={{
             current: unitsPerOrder,
             previous: previousUnitsPerOrder,
@@ -797,6 +798,12 @@ function OverviewView({ data }: { data: DashboardData }) {
             <small>01 · Tráfego</small>
             <strong>{data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}</strong>
             <p>Visitas aos anúncios</p>
+            <ComparisonIndicator
+              current={data.sales.visits}
+              previous={data.comparison.sales?.visits ?? null}
+              periodDays={data.periodDays}
+              compact
+            />
           </div>
           <span className="flow-arrow" aria-hidden="true">→</span>
           <div className="commerce-flow-step">
@@ -804,6 +811,12 @@ function OverviewView({ data }: { data: DashboardData }) {
             <small>02 · Eficiência</small>
             <strong>{formatPercent(data.sales.conversionRatePercent)}</strong>
             <p>Pedidos por visita</p>
+            <ComparisonIndicator
+              current={data.sales.conversionRatePercent}
+              previous={data.comparison.sales?.conversionRatePercent ?? null}
+              periodDays={data.periodDays}
+              compact
+            />
           </div>
           <span className="flow-arrow" aria-hidden="true">→</span>
           <div className="commerce-flow-step">
@@ -811,6 +824,12 @@ function OverviewView({ data }: { data: DashboardData }) {
             <small>03 · Demanda</small>
             <strong>{formatNumber(data.sales.ordersCount)}</strong>
             <p>Pedidos confirmados</p>
+            <ComparisonIndicator
+              current={data.sales.ordersCount}
+              previous={data.comparison.sales?.ordersCount ?? null}
+              periodDays={data.periodDays}
+              compact
+            />
           </div>
           <span className="flow-arrow" aria-hidden="true">→</span>
           <div className="commerce-flow-step flow-result">
@@ -818,6 +837,12 @@ function OverviewView({ data }: { data: DashboardData }) {
             <small>04 · Resultado</small>
             <strong>{formatCurrency(data.sales.grossAmount)}</strong>
             <p>Valor bruto vendido</p>
+            <ComparisonIndicator
+              current={data.sales.grossAmount}
+              previous={data.comparison.sales?.grossAmount ?? null}
+              periodDays={data.periodDays}
+              compact
+            />
           </div>
         </div>
       </section>
@@ -931,7 +956,7 @@ function SalesView({ data }: { data: DashboardData }) {
           value={formatCurrency(data.sales.grossAmount)}
           detail="Período selecionado"
           icon={CircleDollarSign}
-          tone="brand"
+          featured
           comparison={{
             current: data.sales.grossAmount,
             previous: data.comparison.sales?.grossAmount ?? null,
@@ -956,7 +981,6 @@ function SalesView({ data }: { data: DashboardData }) {
             maximumFractionDigits: 2,
           })} unidade por pedido`}
           icon={Box}
-          tone="good"
           comparison={{
             current: data.sales.unitsSold,
             previous: data.comparison.sales?.unitsSold ?? null,
@@ -1043,14 +1067,13 @@ function ProductsView({ data }: { data: DashboardData }) {
   return (
     <>
       <section className="kpi-grid">
-        <KpiCard label="Catálogo total" value={formatNumber(data.catalog.total)} detail="Sem duplicidade entre fontes" icon={Box} tone="brand" />
+        <KpiCard label="Catálogo total" value={formatNumber(data.catalog.total)} detail="Sem duplicidade entre fontes" icon={Box} tone="neutral" />
         <KpiCard label="Com dados operacionais" value={formatNumber(data.catalog.current)} detail="Preço, estoque e status disponíveis" icon={ShoppingBag} />
         <KpiCard
           label="Unidades vendidas"
           value={formatNumber(data.sales.unitsSold)}
           detail={`Janela de ${data.periodDays} dias`}
           icon={TrendingUp}
-          tone="warning"
           comparison={{
             current: data.sales.unitsSold,
             previous: data.comparison.sales?.unitsSold ?? null,
@@ -1062,7 +1085,7 @@ function ProductsView({ data }: { data: DashboardData }) {
           value={data.catalog.unknown === 0 ? "100%" : `${formatNumber(data.catalog.unknown)} pend.`}
           detail="Origem conhecida em todos os itens"
           icon={CheckCircle2}
-          tone="good"
+          tone={data.catalog.unknown === 0 ? "good" : "attention"}
         />
       </section>
       <section className="panel table-panel">
@@ -1153,7 +1176,7 @@ function PerformanceView({ data }: { data: DashboardData }) {
         </div>
       </section>
       <section className="kpi-grid">
-        <KpiCard label="Janela de pedidos" value={`${data.periodDays} dias`} detail="Período selecionado" icon={CalendarDays} tone="brand" />
+        <KpiCard label="Janela de pedidos" value={`${data.periodDays} dias`} detail="Período selecionado" icon={CalendarDays} tone="neutral" />
         <KpiCard
           label="Visitas"
           value={data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}
@@ -1171,7 +1194,7 @@ function PerformanceView({ data }: { data: DashboardData }) {
           value={formatPercent(data.sales.conversionRatePercent)}
           detail="Pedidos divididos por visitas"
           icon={Gauge}
-          tone="good"
+          featured
           comparison={{
             current: data.sales.conversionRatePercent,
             previous: data.comparison.sales?.conversionRatePercent ?? null,
@@ -1405,28 +1428,47 @@ function SellerView({ data }: { data: DashboardData }) {
           value={reputationLabel(currentSnapshot?.reputationLevelId ?? null)}
           detail={snapshotDate ? `Snapshot de ${formatDate(snapshotDate)}` : "Sem snapshot no período"}
           icon={ShieldCheck}
-          tone="brand"
+          tone={reputationSignal(currentSnapshot?.reputationLevelId ?? null)}
+          featured
         />
         <KpiCard
           label="Reclamações ML"
           value={formatSellerRate(currentSnapshot?.claimsRate ?? null)}
           detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.claimsValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.claimsRate, comparisonSnapshot?.claimsRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Sem snapshot no período"}
           icon={Users}
-          tone="warning"
+          tone={evaluateRateFraction(currentSnapshot?.claimsRate ?? null, SELLER_RATE_THRESHOLDS.claims)}
+          comparison={{
+            current: currentSnapshot?.claimsRate ?? null,
+            previous: comparisonSnapshot?.claimsRate ?? null,
+            periodDays: data.periodDays,
+            direction: "lowerIsBetter",
+          }}
         />
         <KpiCard
           label="Atrasos ML"
           value={formatSellerRate(currentSnapshot?.delayedHandlingTimeRate ?? null)}
           detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.delayedHandlingTimeValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.delayedHandlingTimeRate, comparisonSnapshot?.delayedHandlingTimeRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Sem snapshot no período"}
           icon={Activity}
-          tone="warning"
+          tone={evaluateRateFraction(currentSnapshot?.delayedHandlingTimeRate ?? null, SELLER_RATE_THRESHOLDS.delayedHandling)}
+          comparison={{
+            current: currentSnapshot?.delayedHandlingTimeRate ?? null,
+            previous: comparisonSnapshot?.delayedHandlingTimeRate ?? null,
+            periodDays: data.periodDays,
+            direction: "lowerIsBetter",
+          }}
         />
         <KpiCard
           label="Cancelamentos ML"
           value={formatSellerRate(currentSnapshot?.cancellationsRate ?? null)}
           detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.cancellationsValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.cancellationsRate, comparisonSnapshot?.cancellationsRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Métrica oficial do Seller"}
           icon={X}
-          tone="warning"
+          tone={evaluateRateFraction(currentSnapshot?.cancellationsRate ?? null, SELLER_RATE_THRESHOLDS.cancellations)}
+          comparison={{
+            current: currentSnapshot?.cancellationsRate ?? null,
+            previous: comparisonSnapshot?.cancellationsRate ?? null,
+            periodDays: data.periodDays,
+            direction: "lowerIsBetter",
+          }}
         />
       </section>
 
@@ -1445,28 +1487,50 @@ function SellerView({ data }: { data: DashboardData }) {
           value={formatNumber(cancellations.canceledOrdersCount)}
           detail={cancellations.canceledOrdersPercent === null ? "Sem pedidos no período" : `${formatPercent(cancellations.canceledOrdersPercent)} dos ${formatNumber(cancellations.ordersCount)} pedidos criados`}
           icon={X}
-          tone="warning"
+          tone={evaluateRate(cancellations.canceledOrdersPercent, SELLER_RATE_THRESHOLDS.canceledOrdersShare)}
+          comparison={{
+            current: cancellations.canceledOrdersCount,
+            previous: previousCancellations?.canceledOrdersCount ?? null,
+            periodDays: data.periodDays,
+            direction: "lowerIsBetter",
+          }}
         />
         <KpiCard
           label="Valor bruto cancelado"
           value={formatCurrency(cancellations.canceledAmount)}
           detail="Soma do valor original dos pedidos cancelados"
           icon={CircleDollarSign}
-          tone="warning"
+          comparison={{
+            current: cancellations.canceledAmount,
+            previous: previousCancellations?.canceledAmount ?? null,
+            periodDays: data.periodDays,
+            direction: "lowerIsBetter",
+          }}
         />
         <KpiCard
           label="Impacto sobre o valor"
           value={formatTablePercent(cancellations.canceledAmountPercent)}
           detail={`De ${formatCurrency(cancellations.grossAmount)} em pedidos criados`}
           icon={Gauge}
-          tone="warning"
+          tone={evaluateRate(cancellations.canceledAmountPercent, SELLER_RATE_THRESHOLDS.canceledAmountShare)}
+          comparison={{
+            current: cancellations.canceledAmountPercent,
+            previous: previousCancellations?.canceledAmountPercent ?? null,
+            periodDays: data.periodDays,
+            direction: "lowerIsBetter",
+          }}
         />
         <KpiCard
           label="Ticket cancelado"
           value={cancellations.averageCanceledTicket === null ? "—" : formatCurrency(cancellations.averageCanceledTicket)}
           detail={previousCancellations ? `Comparação: ${formatNumber(previousCancellations.canceledOrdersCount)} cancelamentos no período anterior` : "Sem base de comparação"}
           icon={ShoppingBag}
-          tone="neutral"
+          comparison={{
+            current: cancellations.averageCanceledTicket,
+            previous: previousCancellations?.averageCanceledTicket ?? null,
+            periodDays: data.periodDays,
+            direction: "lowerIsBetter",
+          }}
         />
       </section>
 
