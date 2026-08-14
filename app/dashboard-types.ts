@@ -131,6 +131,7 @@ export type LogisticsSlaSummary = {
   cancelledCount: number;
   terminalWithoutCompletionCount: number;
   onTimePercent: number | null;
+  averageElapsedMinutes: number | null;
   averageBreachMinutes: number | null;
   averageBreachDays: number | null;
 };
@@ -356,11 +357,11 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
   logistics: {
     dispatch: {
       shipmentsCount: 0, completedCount: 0, onTimeCount: 0, lateCount: 0, pendingCount: 0, overdueCount: 0,
-      cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageBreachMinutes: null, averageBreachDays: null,
+      cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageElapsedMinutes: null, averageBreachMinutes: null, averageBreachDays: null,
     },
     delivery: {
       shipmentsCount: 0, completedCount: 0, onTimeCount: 0, lateCount: 0, pendingCount: 0, overdueCount: 0,
-      cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageBreachMinutes: null, averageBreachDays: null,
+      cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageElapsedMinutes: null, averageBreachMinutes: null, averageBreachDays: null,
     },
     comparisonDispatch: null,
     comparisonDelivery: null,
