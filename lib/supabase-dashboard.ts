@@ -5,6 +5,11 @@ import {
   type CancellationSummary,
   type DailyPerformancePoint,
   type DashboardData,
+  type FulfillmentInventorySummary,
+  type LogisticsEconomicsSummary,
+  type LogisticsSlaBreakdown,
+  type LogisticsSlaPolicy,
+  type LogisticsSlaSummary,
   type ComparisonMode,
   type ProductComparison,
   type ProductPeriodMetrics,
@@ -97,6 +102,55 @@ type CancellationRecord = {
   canceled_amount_percent: number | string | null;
   average_canceled_ticket: number | string | null;
   synced_at: string | null;
+};
+
+type LogisticsSlaRecord = {
+  sale_date: string;
+  logistic_type: string | null;
+  event_name: string;
+  target_source: string;
+  measurement_quality: string;
+  shipments_count: number | string | null;
+  completed_count: number | string | null;
+  on_time_count: number | string | null;
+  late_count: number | string | null;
+  pending_count: number | string | null;
+  overdue_count: number | string | null;
+  avg_breach_minutes: number | string | null;
+  avg_breach_days: number | string | null;
+  cancelled_count: number | string | null;
+  terminal_without_completion_count: number | string | null;
+};
+
+type LogisticsEconomicsRecord = {
+  sale_date: string;
+  orders_count: number | string | null;
+  paid_orders_count: number | string | null;
+  orders_with_return: number | string | null;
+  orders_with_return_cost: number | string | null;
+  returned_units: number | string | null;
+  paid_gross_revenue: number | string | null;
+  outbound_shipping_cost: number | string | null;
+  return_shipping_cost: number | string | null;
+  total_shipping_cost: number | string | null;
+};
+
+type FulfillmentInventoryRecord = {
+  inventory_id: string;
+  total_quantity: number | string | null;
+  available_quantity: number | string | null;
+  not_available_quantity: number | string | null;
+  synced_at: string | null;
+};
+
+type LogisticsSlaPolicyRecord = {
+  policy_name: string;
+  logistic_type: string | null;
+  start_event_code: string;
+  end_event_code: string;
+  target_minutes: number | string;
+  valid_from: string;
+  valid_to: string | null;
 };
 
 type SupabaseConfig = {
@@ -560,6 +614,142 @@ function buildCancellationDaily(records: CancellationRecord[]): CancellationDail
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+function buildLogisticsSlaSummary(records: LogisticsSlaRecord[]): LogisticsSlaSummary {
+  const totals = records.reduce(
+    (acc, record) => {
+      const lateCount = toNumber(record.late_count);
+      acc.shipmentsCount += toNumber(record.shipments_count);
+      acc.completedCount += toNumber(record.completed_count);
+      acc.onTimeCount += toNumber(record.on_time_count);
+      acc.lateCount += lateCount;
+      acc.pendingCount += toNumber(record.pending_count);
+      acc.overdueCount += toNumber(record.overdue_count);
+      acc.cancelledCount += toNumber(record.cancelled_count);
+      acc.terminalWithoutCompletionCount += toNumber(record.terminal_without_completion_count);
+      acc.breachMinutesTotal += toNumber(record.avg_breach_minutes) * lateCount;
+      acc.breachDaysTotal += toNumber(record.avg_breach_days) * lateCount;
+      return acc;
+    },
+    {
+      shipmentsCount: 0,
+      completedCount: 0,
+      onTimeCount: 0,
+      lateCount: 0,
+      pendingCount: 0,
+      overdueCount: 0,
+      cancelledCount: 0,
+      terminalWithoutCompletionCount: 0,
+      breachMinutesTotal: 0,
+      breachDaysTotal: 0,
+    },
+  );
+
+  return {
+    shipmentsCount: totals.shipmentsCount,
+    completedCount: totals.completedCount,
+    onTimeCount: totals.onTimeCount,
+    lateCount: totals.lateCount,
+    pendingCount: totals.pendingCount,
+    overdueCount: totals.overdueCount,
+    cancelledCount: totals.cancelledCount,
+    terminalWithoutCompletionCount: totals.terminalWithoutCompletionCount,
+    onTimePercent: totals.completedCount > 0 ? (totals.onTimeCount / totals.completedCount) * 100 : null,
+    averageBreachMinutes: totals.lateCount > 0 ? totals.breachMinutesTotal / totals.lateCount : null,
+    averageBreachDays: totals.lateCount > 0 ? totals.breachDaysTotal / totals.lateCount : null,
+  };
+}
+
+function buildLogisticsSlaBreakdown(records: LogisticsSlaRecord[]): LogisticsSlaBreakdown[] {
+  const groups = new Map<string, { key: Omit<LogisticsSlaBreakdown, keyof LogisticsSlaSummary>; records: LogisticsSlaRecord[] }>();
+
+  for (const record of records) {
+    const key = [record.event_name, record.logistic_type ?? "Sem modalidade", record.target_source, record.measurement_quality].join("|");
+    const group = groups.get(key) ?? {
+      key: {
+        eventName: record.event_name,
+        logisticType: record.logistic_type,
+        targetSource: record.target_source,
+        measurementQuality: record.measurement_quality,
+      },
+      records: [],
+    };
+    group.records.push(record);
+    groups.set(key, group);
+  }
+
+  return Array.from(groups.values())
+    .map((group) => ({ ...group.key, ...buildLogisticsSlaSummary(group.records) }))
+    .sort((a, b) => b.shipmentsCount - a.shipmentsCount || a.eventName.localeCompare(b.eventName));
+}
+
+function buildLogisticsEconomics(records: LogisticsEconomicsRecord[]): LogisticsEconomicsSummary {
+  const totals = records.reduce(
+    (acc, record) => {
+      acc.ordersCount += toNumber(record.orders_count);
+      acc.paidOrdersCount += toNumber(record.paid_orders_count);
+      acc.ordersWithReturn += toNumber(record.orders_with_return);
+      acc.ordersWithReturnCost += toNumber(record.orders_with_return_cost);
+      acc.returnedUnits += toNumber(record.returned_units);
+      acc.paidGrossRevenue += toNumber(record.paid_gross_revenue);
+      acc.outboundShippingCost += toNumber(record.outbound_shipping_cost);
+      acc.returnShippingCost += toNumber(record.return_shipping_cost);
+      acc.totalShippingCost += toNumber(record.total_shipping_cost);
+      return acc;
+    },
+    {
+      ordersCount: 0,
+      paidOrdersCount: 0,
+      ordersWithReturn: 0,
+      ordersWithReturnCost: 0,
+      returnedUnits: 0,
+      paidGrossRevenue: 0,
+      outboundShippingCost: 0,
+      returnShippingCost: 0,
+      totalShippingCost: 0,
+    },
+  );
+
+  return {
+    ...totals,
+    returnCostOverGrossPercent: totals.paidGrossRevenue > 0
+      ? (totals.returnShippingCost / totals.paidGrossRevenue) * 100
+      : null,
+    totalShippingCostOverGrossPercent: totals.paidGrossRevenue > 0
+      ? (totals.totalShippingCost / totals.paidGrossRevenue) * 100
+      : null,
+  };
+}
+
+function buildFulfillmentInventory(records: FulfillmentInventoryRecord[]): FulfillmentInventorySummary {
+  const totals = records.reduce(
+    (acc, record) => {
+      acc.totalQuantity += toNumber(record.total_quantity);
+      acc.availableQuantity += toNumber(record.available_quantity);
+      acc.notAvailableQuantity += toNumber(record.not_available_quantity);
+      return acc;
+    },
+    { totalQuantity: 0, availableQuantity: 0, notAvailableQuantity: 0 },
+  );
+  const timestamps = records.map((record) => record.synced_at).filter((value): value is string => Boolean(value)).sort();
+
+  return {
+    ...totals,
+    availablePercent: totals.totalQuantity > 0 ? (totals.availableQuantity / totals.totalQuantity) * 100 : null,
+    skuCount: new Set(records.map((record) => record.inventory_id)).size,
+    syncedAt: timestamps.at(-1) ?? null,
+  };
+}
+
+function buildLogisticsPolicies(records: LogisticsSlaPolicyRecord[]): LogisticsSlaPolicy[] {
+  return records.map((record) => ({
+    name: record.policy_name,
+    logisticType: record.logistic_type,
+    startEventCode: record.start_event_code,
+    endEventCode: record.end_event_code,
+    targetMinutes: toNumber(record.target_minutes),
+  }));
+}
+
 function aggregateProducts(records: ItemPerformanceRecord[]): TopProduct[] {
   const byItem = new Map<string, TopProduct>();
 
@@ -707,6 +897,13 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       : {
           and: `(performance_date.gte.${dateSelection.currentStart},performance_date.lte.${dateSelection.currentEnd})`,
         };
+    const logisticsPeriodFilter: Record<string, string> = hasComparison
+      ? {
+          or: `(and(sale_date.gte.${dateSelection.currentStart},sale_date.lte.${dateSelection.currentEnd}),and(sale_date.gte.${dateSelection.comparisonStart},sale_date.lte.${dateSelection.comparisonEnd}))`,
+        }
+      : {
+          and: `(sale_date.gte.${dateSelection.currentStart},sale_date.lte.${dateSelection.currentEnd})`,
+        };
     const [
       catalogRecords,
       summaryRecords,
@@ -714,6 +911,10 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       sellerCurrentRecords,
       sellerSnapshotRecords,
       cancellationRecords,
+      logisticsSlaRecords,
+      logisticsEconomicsRecords,
+      fulfillmentRecords,
+      logisticsPolicyRecords,
     ] = await Promise.all([
       fetchAll<CatalogRecord>(
         config,
@@ -771,6 +972,43 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           order: "performance_date.asc",
         }),
       ),
+      optionalFetchAll<LogisticsSlaRecord>(
+        config,
+        appendQuery("dashboard_daily_logistics_sla", {
+          select:
+            "sale_date,logistic_type,event_name,target_source,measurement_quality,shipments_count,completed_count,on_time_count,late_count,pending_count,overdue_count,avg_breach_minutes,avg_breach_days,cancelled_count,terminal_without_completion_count",
+          account_id: accountFilter,
+          ...logisticsPeriodFilter,
+          order: "sale_date.asc",
+        }),
+      ),
+      optionalFetchAll<LogisticsEconomicsRecord>(
+        config,
+        appendQuery("dashboard_daily_logistics_economics", {
+          select:
+            "sale_date,orders_count,paid_orders_count,orders_with_return,orders_with_return_cost,returned_units,paid_gross_revenue,outbound_shipping_cost,return_shipping_cost,total_shipping_cost",
+          account_id: accountFilter,
+          ...logisticsPeriodFilter,
+          order: "sale_date.asc",
+        }),
+      ),
+      optionalFetchAll<FulfillmentInventoryRecord>(
+        config,
+        appendQuery("dashboard_fulfillment_inventory", {
+          select: "inventory_id,total_quantity,available_quantity,not_available_quantity,synced_at",
+          account_id: accountFilter,
+        }),
+      ),
+      optionalFetchAll<LogisticsSlaPolicyRecord>(
+        config,
+        appendQuery("logistics_sla_policies", {
+          select: "policy_name,logistic_type,start_event_code,end_event_code,target_minutes,valid_from,valid_to",
+          account_id: accountFilter,
+          active: "eq.true",
+          valid_from: `lte.${dateSelection.currentEnd}`,
+          order: "policy_name.asc",
+        }),
+      ),
     ]);
 
     const timestamps = catalogRecords
@@ -801,6 +1039,24 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
     const previousCancellationRecords = cancellationRecords.filter((record) =>
       inRange(record.performance_date, dateSelection.comparisonStart, dateSelection.comparisonEnd),
     );
+    const currentLogisticsSlaRecords = logisticsSlaRecords.filter((record) =>
+      inRange(record.sale_date, dateSelection.currentStart, dateSelection.currentEnd),
+    );
+    const previousLogisticsSlaRecords = logisticsSlaRecords.filter((record) =>
+      inRange(record.sale_date, dateSelection.comparisonStart, dateSelection.comparisonEnd),
+    );
+    const currentLogisticsEconomicsRecords = logisticsEconomicsRecords.filter((record) =>
+      inRange(record.sale_date, dateSelection.currentStart, dateSelection.currentEnd),
+    );
+    const previousLogisticsEconomicsRecords = logisticsEconomicsRecords.filter((record) =>
+      inRange(record.sale_date, dateSelection.comparisonStart, dateSelection.comparisonEnd),
+    );
+    const officialSla = (records: LogisticsSlaRecord[], eventName: string, targetSource: string) =>
+      records.filter((record) =>
+        record.event_name === eventName &&
+        record.target_source === targetSource &&
+        record.measurement_quality === "prospective",
+      );
 
     return {
       source: "supabase",
@@ -854,6 +1110,33 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           : null,
         dailyCurrent: buildCancellationDaily(currentCancellationRecords),
         dailyComparison: buildCancellationDaily(previousCancellationRecords),
+      },
+      logistics: {
+        dispatch: buildLogisticsSlaSummary(
+          officialSla(currentLogisticsSlaRecords, "Despacho ao transportador", "meli_sla"),
+        ),
+        delivery: buildLogisticsSlaSummary(
+          officialSla(currentLogisticsSlaRecords, "Entrega ao comprador", "meli_lead_time"),
+        ),
+        comparisonDispatch: previousLogisticsSlaRecords.length
+          ? buildLogisticsSlaSummary(
+            officialSla(previousLogisticsSlaRecords, "Despacho ao transportador", "meli_sla"),
+          )
+          : null,
+        comparisonDelivery: previousLogisticsSlaRecords.length
+          ? buildLogisticsSlaSummary(
+            officialSla(previousLogisticsSlaRecords, "Entrega ao comprador", "meli_lead_time"),
+          )
+          : null,
+        slaBreakdown: buildLogisticsSlaBreakdown(currentLogisticsSlaRecords),
+        economics: buildLogisticsEconomics(currentLogisticsEconomicsRecords),
+        comparisonEconomics: previousLogisticsEconomicsRecords.length
+          ? buildLogisticsEconomics(previousLogisticsEconomicsRecords)
+          : null,
+        fulfillment: buildFulfillmentInventory(fulfillmentRecords),
+        policies: buildLogisticsPolicies(
+          logisticsPolicyRecords.filter((record) => !record.valid_to || record.valid_to >= dateSelection.currentStart),
+        ),
       },
     };
   } catch (error) {
