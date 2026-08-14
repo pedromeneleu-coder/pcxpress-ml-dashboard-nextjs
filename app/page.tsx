@@ -18,12 +18,15 @@ import {
   LayoutDashboard,
   Menu,
   Minus,
+  PackageCheck,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldCheck,
   ShoppingBag,
   Store,
   TrendingUp,
+  Truck,
   Users,
   X,
   Zap,
@@ -35,17 +38,8 @@ import {
   type DailyPerformancePoint,
   type DashboardData,
 } from "./dashboard-types";
-import {
-  SELLER_RATE_THRESHOLDS,
-  evaluateRate,
-  evaluateRateFraction,
-  evaluateTrend,
-  reputationSignal,
-  type MetricDirection,
-  type SignalTone,
-} from "./metric-signals";
 
-type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "seller";
+type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "logistics" | "seller";
 
 const navItems = [
   { id: "overview", label: "Visão geral", icon: LayoutDashboard },
@@ -53,6 +47,7 @@ const navItems = [
   { id: "products", label: "Produtos e anúncios", icon: ShoppingBag },
   { id: "performance", label: "Performance", icon: BarChart3 },
   { id: "traffic", label: "Tráfego e conversão", icon: Eye },
+  { id: "logistics", label: "Logística", icon: Truck },
   { id: "seller", label: "Saúde do seller", icon: ShieldCheck },
 ] as const;
 
@@ -76,6 +71,10 @@ const viewMeta: Record<ViewId, { title: string; description: string }> = {
   traffic: {
     title: "Tráfego e conversão",
     description: "Demanda, eficiência de conversão e oportunidades por anúncio.",
+  },
+  logistics: {
+    title: "Logística",
+    description: "SLA, pendências, devoluções, custo reverso e disponibilidade do Full.",
   },
   seller: {
     title: "Saúde do seller",
@@ -138,6 +137,35 @@ function formatPercent(value: number | null) {
 
 function formatTablePercent(value: number | null) {
   return value === null ? "—" : formatPercent(value);
+}
+
+function formatLogisticsDuration(minutes: number | null, days: number | null) {
+  if (days !== null) {
+    return `${days.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} dia(s)`;
+  }
+
+  if (minutes === null) return "—";
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  return `${(minutes / 60).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h`;
+}
+
+function logisticsSourceLabel(source: string) {
+  const labels: Record<string, string> = {
+    meli_sla: "SLA Mercado Livre",
+    meli_lead_time: "Promessa Mercado Livre",
+    internal_policy: "Meta interna",
+  };
+  return labels[source] ?? source;
+}
+
+function logisticsQualityLabel(value: string) {
+  const labels: Record<string, string> = {
+    prospective: "Oficial",
+    retrospective: "Histórico",
+    pending: "Em aberto",
+    internal_policy: "Meta interna",
+  };
+  return labels[value] ?? value;
 }
 
 function formatDate(value: string | null) {
@@ -205,22 +233,27 @@ function shiftIsoDate(value: string | null, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
-function getChange(
-  current: number | null | undefined,
-  previous: number | null | undefined,
-  direction: MetricDirection = "higherIsBetter",
-) {
-  const trend = evaluateTrend(current, previous, direction);
-
-  if (trend.label === "Sem base anterior") {
-    return { label: "Sem base", tone: trend.tone, arrow: trend.arrow };
+function getChange(current: number | null | undefined, previous: number | null | undefined) {
+  if (current === null || current === undefined || previous === null || previous === undefined) {
+    return { label: "Sem base", direction: "neutral" as const };
   }
 
-  const sign = trend.changePercent === null || trend.changePercent === 0
-    ? ""
-    : trend.changePercent > 0 ? "+" : "-";
+  if (previous === 0) {
+    return current > 0
+      ? { label: "Novo", direction: "up" as const }
+      : { label: "0,0%", direction: "neutral" as const };
+  }
 
-  return { label: `${sign}${trend.label}`, tone: trend.tone, arrow: trend.arrow };
+  const change = ((current - previous) / Math.abs(previous)) * 100;
+  const formatted = Math.abs(change).toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+
+  return {
+    label: `${change > 0 ? "+" : change < 0 ? "-" : ""}${formatted}%`,
+    direction: change > 0 ? "up" as const : change < 0 ? "down" as const : "neutral" as const,
+  };
 }
 
 type ChartMetricId = "grossAmount" | "ordersCount" | "unitsSold" | "visits";
@@ -459,10 +492,10 @@ function PeriodComparisonChart({ data }: { data: DashboardData }) {
                 <text className="chart-tooltip-text" x={tooltipX + 12} y="82">
                   Anterior ({formatDate(hoveredIndex < data.comparison.periodDays ? shiftIsoDate(data.dailyPerformance.previousFirstDate, hoveredIndex) : null)}): {hoveredPrevious === null || hoveredPrevious === undefined ? "Sem dado" : formatChartValue(metric, hoveredPrevious)}
                 </text>
-                <text className={`chart-tooltip-change ${periodChange.tone}`} x={tooltipX + 12} y="101">
+                <text className={`chart-tooltip-change ${periodChange.direction}`} x={tooltipX + 12} y="101">
                   Vs. período anterior: {periodChange.label}
                 </text>
-                <text className={`chart-tooltip-change ${dayChange.tone}`} x={tooltipX + 12} y="118">
+                <text className={`chart-tooltip-change ${dayChange.direction}`} x={tooltipX + 12} y="118">
                   Vs. dia anterior: {dayChange.label}
                 </text>
               </g>
@@ -484,36 +517,42 @@ type ComparisonMetric = {
   current: number | null;
   previous: number | null;
   periodDays: number;
-  /** Em cancelamentos e reclamações, cair é bom: a cor inverte, a seta não. */
-  direction?: MetricDirection;
 };
 
-const toneDescription: Record<SignalTone, string> = {
-  good: "resultado positivo",
-  bad: "resultado negativo",
-  attention: "exige atenção",
-  neutral: "variação pequena, tratada como estável",
-};
+function ComparisonIndicator({ current, previous, periodDays, compact = false }: ComparisonMetric & { compact?: boolean }) {
+  if (current === null || previous === null) {
+    return (
+      <span className={`comparison-indicator comparison-neutral${compact ? " comparison-compact" : ""}`}>
+        <Minus size={13} /> Sem base anterior
+      </span>
+    );
+  }
 
-function ComparisonIndicator({
-  current,
-  previous,
-  periodDays,
-  direction = "higherIsBetter",
-  compact = false,
-}: ComparisonMetric & { compact?: boolean }) {
-  const trend = evaluateTrend(current, previous, direction);
-  const Icon = trend.arrow === "up" ? ArrowUpRight : trend.arrow === "down" ? ArrowDownRight : Minus;
-  const text = trend.label === "Sem base anterior"
-    ? trend.label
-    : `${trend.label} vs. período anterior`;
+  if (previous === 0) {
+    const hasGrowth = current > 0;
+
+    return (
+      <span className={`comparison-indicator comparison-${hasGrowth ? "up" : "neutral"}${compact ? " comparison-compact" : ""}`}>
+        {hasGrowth ? <ArrowUpRight size={13} /> : <Minus size={13} />}
+        {hasGrowth ? "Novo vs. período anterior" : "Sem variação vs. período anterior"}
+      </span>
+    );
+  }
+
+  const changePercent = ((current - previous) / Math.abs(previous)) * 100;
+  const direction = changePercent > 0 ? "up" : changePercent < 0 ? "down" : "neutral";
+  const Icon = direction === "up" ? ArrowUpRight : direction === "down" ? ArrowDownRight : Minus;
+  const formattedChange = Math.abs(changePercent).toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
 
   return (
     <span
-      className={`comparison-indicator comparison-${trend.tone}${compact ? " comparison-compact" : ""}`}
-      title={`${text} — ${toneDescription[trend.tone]}. Período principal: ${periodDays} dias; comparação conforme o filtro global.`}
+      className={`comparison-indicator comparison-${direction}${compact ? " comparison-compact" : ""}`}
+      title={`Período principal: ${periodDays} dias; comparação conforme o filtro global`}
     >
-      <Icon size={13} /> {text}
+      <Icon size={13} /> {formattedChange}% vs. período anterior
     </span>
   );
 }
@@ -523,7 +562,7 @@ function KpiCard({
   value,
   detail,
   icon: Icon,
-  tone,
+  tone = "neutral",
   comparison,
   featured = false,
 }: {
@@ -531,18 +570,12 @@ function KpiCard({
   value: string;
   detail: string;
   icon: typeof Activity;
-  /** Sem tone explícito, a cor nasce do próprio desempenho do indicador. */
-  tone?: SignalTone | "brand";
+  tone?: "neutral" | "good" | "warning" | "brand";
   comparison?: ComparisonMetric;
   featured?: boolean;
 }) {
-  const derivedTone = comparison
-    ? evaluateTrend(comparison.current, comparison.previous, comparison.direction).tone
-    : "neutral";
-  const resolvedTone = tone ?? derivedTone;
-
   return (
-    <article className={`kpi-card kpi-${resolvedTone}${featured ? " kpi-featured" : ""}`}>
+    <article className={`kpi-card kpi-${tone}${featured ? " kpi-featured" : ""}`}>
       <div className="kpi-topline">
         <span>{label}</span>
         <span className="icon-box" aria-hidden="true">
@@ -611,10 +644,10 @@ function TopProductsTable({ data }: { data: DashboardData }) {
 
 function ProductVariation({ current, previous }: { current: number; previous: number }) {
   const change = getChange(current, previous);
-  const Icon = change.arrow === "up" ? ArrowUpRight : change.arrow === "down" ? ArrowDownRight : Minus;
+  const Icon = change.direction === "up" ? ArrowUpRight : change.direction === "down" ? ArrowDownRight : Minus;
 
   return (
-    <span className={`product-variation variation-${change.tone}`}>
+    <span className={`product-variation variation-${change.direction}`}>
       <Icon size={13} /> {change.label}
     </span>
   );
@@ -744,6 +777,7 @@ function OverviewView({ data }: { data: DashboardData }) {
           value={formatCurrency(data.sales.grossAmount)}
           detail={`Resultado acumulado em ${data.periodDays} dias`}
           icon={CircleDollarSign}
+          tone="brand"
           featured
           comparison={{
             current: data.sales.grossAmount,
@@ -767,6 +801,7 @@ function OverviewView({ data }: { data: DashboardData }) {
           value={data.sales.avgTicket === null ? "Após conexão" : formatCurrency(data.sales.avgTicket)}
           detail="Valor bruto dividido por pedidos"
           icon={Gauge}
+          tone="good"
           comparison={{
             current: data.sales.avgTicket,
             previous: data.comparison.sales?.avgTicket ?? null,
@@ -778,6 +813,7 @@ function OverviewView({ data }: { data: DashboardData }) {
           value={formatNumber(data.sales.unitsSold)}
           detail={unitsPerOrder === null ? "Sem pedidos no período" : `${unitsPerOrder.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} por pedido`}
           icon={TrendingUp}
+          tone="warning"
           comparison={{
             current: unitsPerOrder,
             previous: previousUnitsPerOrder,
@@ -798,12 +834,6 @@ function OverviewView({ data }: { data: DashboardData }) {
             <small>01 · Tráfego</small>
             <strong>{data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}</strong>
             <p>Visitas aos anúncios</p>
-            <ComparisonIndicator
-              current={data.sales.visits}
-              previous={data.comparison.sales?.visits ?? null}
-              periodDays={data.periodDays}
-              compact
-            />
           </div>
           <span className="flow-arrow" aria-hidden="true">→</span>
           <div className="commerce-flow-step">
@@ -811,12 +841,6 @@ function OverviewView({ data }: { data: DashboardData }) {
             <small>02 · Eficiência</small>
             <strong>{formatPercent(data.sales.conversionRatePercent)}</strong>
             <p>Pedidos por visita</p>
-            <ComparisonIndicator
-              current={data.sales.conversionRatePercent}
-              previous={data.comparison.sales?.conversionRatePercent ?? null}
-              periodDays={data.periodDays}
-              compact
-            />
           </div>
           <span className="flow-arrow" aria-hidden="true">→</span>
           <div className="commerce-flow-step">
@@ -824,12 +848,6 @@ function OverviewView({ data }: { data: DashboardData }) {
             <small>03 · Demanda</small>
             <strong>{formatNumber(data.sales.ordersCount)}</strong>
             <p>Pedidos confirmados</p>
-            <ComparisonIndicator
-              current={data.sales.ordersCount}
-              previous={data.comparison.sales?.ordersCount ?? null}
-              periodDays={data.periodDays}
-              compact
-            />
           </div>
           <span className="flow-arrow" aria-hidden="true">→</span>
           <div className="commerce-flow-step flow-result">
@@ -837,12 +855,6 @@ function OverviewView({ data }: { data: DashboardData }) {
             <small>04 · Resultado</small>
             <strong>{formatCurrency(data.sales.grossAmount)}</strong>
             <p>Valor bruto vendido</p>
-            <ComparisonIndicator
-              current={data.sales.grossAmount}
-              previous={data.comparison.sales?.grossAmount ?? null}
-              periodDays={data.periodDays}
-              compact
-            />
           </div>
         </div>
       </section>
@@ -956,7 +968,7 @@ function SalesView({ data }: { data: DashboardData }) {
           value={formatCurrency(data.sales.grossAmount)}
           detail="Período selecionado"
           icon={CircleDollarSign}
-          featured
+          tone="brand"
           comparison={{
             current: data.sales.grossAmount,
             previous: data.comparison.sales?.grossAmount ?? null,
@@ -981,6 +993,7 @@ function SalesView({ data }: { data: DashboardData }) {
             maximumFractionDigits: 2,
           })} unidade por pedido`}
           icon={Box}
+          tone="good"
           comparison={{
             current: data.sales.unitsSold,
             previous: data.comparison.sales?.unitsSold ?? null,
@@ -1067,13 +1080,14 @@ function ProductsView({ data }: { data: DashboardData }) {
   return (
     <>
       <section className="kpi-grid">
-        <KpiCard label="Catálogo total" value={formatNumber(data.catalog.total)} detail="Sem duplicidade entre fontes" icon={Box} tone="neutral" />
+        <KpiCard label="Catálogo total" value={formatNumber(data.catalog.total)} detail="Sem duplicidade entre fontes" icon={Box} tone="brand" />
         <KpiCard label="Com dados operacionais" value={formatNumber(data.catalog.current)} detail="Preço, estoque e status disponíveis" icon={ShoppingBag} />
         <KpiCard
           label="Unidades vendidas"
           value={formatNumber(data.sales.unitsSold)}
           detail={`Janela de ${data.periodDays} dias`}
           icon={TrendingUp}
+          tone="warning"
           comparison={{
             current: data.sales.unitsSold,
             previous: data.comparison.sales?.unitsSold ?? null,
@@ -1085,7 +1099,7 @@ function ProductsView({ data }: { data: DashboardData }) {
           value={data.catalog.unknown === 0 ? "100%" : `${formatNumber(data.catalog.unknown)} pend.`}
           detail="Origem conhecida em todos os itens"
           icon={CheckCircle2}
-          tone={data.catalog.unknown === 0 ? "good" : "attention"}
+          tone="good"
         />
       </section>
       <section className="panel table-panel">
@@ -1176,7 +1190,7 @@ function PerformanceView({ data }: { data: DashboardData }) {
         </div>
       </section>
       <section className="kpi-grid">
-        <KpiCard label="Janela de pedidos" value={`${data.periodDays} dias`} detail="Período selecionado" icon={CalendarDays} tone="neutral" />
+        <KpiCard label="Janela de pedidos" value={`${data.periodDays} dias`} detail="Período selecionado" icon={CalendarDays} tone="brand" />
         <KpiCard
           label="Visitas"
           value={data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}
@@ -1194,7 +1208,7 @@ function PerformanceView({ data }: { data: DashboardData }) {
           value={formatPercent(data.sales.conversionRatePercent)}
           detail="Pedidos divididos por visitas"
           icon={Gauge}
-          featured
+          tone="good"
           comparison={{
             current: data.sales.conversionRatePercent,
             previous: data.comparison.sales?.conversionRatePercent ?? null,
@@ -1364,6 +1378,140 @@ function TrafficView({ data }: { data: DashboardData }) {
   );
 }
 
+function LogisticsView({ data }: { data: DashboardData }) {
+  const { dispatch, delivery, comparisonDispatch, comparisonDelivery, economics, comparisonEconomics, fulfillment, policies, slaBreakdown } = data.logistics;
+  const hasSlaData = slaBreakdown.length > 0;
+  const hasEconomicsData = economics.ordersCount > 0 || economics.returnShippingCost > 0;
+
+  return (
+    <>
+      <div className="context-banner logistics-context-banner">
+        <div>
+          <Truck size={16} />
+          <span>
+            <strong>SLA oficial:</strong> os cards de despacho e entrega consideram somente medições prospectivas, isto é, promessas capturadas antes da conclusão do evento.
+          </span>
+        </div>
+        <span className={`status-badge ${hasSlaData ? "status-good" : "status-neutral"}`}>
+          {hasSlaData ? "Dados logísticos ativos" : "Aguardando dados logísticos"}
+        </span>
+      </div>
+
+      <section className="kpi-grid">
+        <KpiCard
+          label="Despacho no prazo"
+          value={formatTablePercent(dispatch.onTimePercent)}
+          detail={dispatch.completedCount ? `${formatNumber(dispatch.onTimeCount)} de ${formatNumber(dispatch.completedCount)} despachos concluídos` : "Sem coorte oficial concluída no período"}
+          icon={PackageCheck}
+          tone="good"
+          comparison={{ current: dispatch.onTimePercent, previous: comparisonDispatch?.onTimePercent ?? null, periodDays: data.periodDays }}
+        />
+        <KpiCard
+          label="Entrega no prazo"
+          value={formatTablePercent(delivery.onTimePercent)}
+          detail={delivery.completedCount ? `${formatNumber(delivery.onTimeCount)} de ${formatNumber(delivery.completedCount)} entregas concluídas` : "Sem coorte oficial concluída no período"}
+          icon={Truck}
+          tone="brand"
+          comparison={{ current: delivery.onTimePercent, previous: comparisonDelivery?.onTimePercent ?? null, periodDays: data.periodDays }}
+        />
+        <KpiCard
+          label="Despachos vencidos"
+          value={formatNumber(dispatch.overdueCount)}
+          detail={`${formatNumber(dispatch.pendingCount)} pendente(s) ainda dentro do prazo · ${formatNumber(dispatch.cancelledCount)} cancelado(s)`}
+          icon={AlertTriangle}
+          tone={dispatch.overdueCount ? "warning" : "good"}
+          comparison={{ current: dispatch.overdueCount, previous: comparisonDispatch?.overdueCount ?? null, periodDays: data.periodDays }}
+        />
+        <KpiCard
+          label="Custo reverso / valor pago"
+          value={formatTablePercent(economics.returnCostOverGrossPercent)}
+          detail={hasEconomicsData ? `${formatCurrency(economics.returnShippingCost)} atribuídos à coorte de venda` : "Sem custos de devolução atribuídos no período"}
+          icon={RotateCcw}
+          tone="warning"
+          comparison={{ current: economics.returnCostOverGrossPercent, previous: comparisonEconomics?.returnCostOverGrossPercent ?? null, periodDays: data.periodDays }}
+        />
+      </section>
+
+      <section className="content-grid equal">
+        <article className="panel">
+          <PanelTitle title="Backlog operacional" subtitle="Envios ativos; cancelamentos e falhas terminais não entram como atraso em aberto." />
+          <div className="logistics-backlog-grid">
+            <div><span>Despacho pendente</span><strong>{formatNumber(dispatch.pendingCount)}</strong><small>{formatNumber(dispatch.overdueCount)} vencido(s)</small></div>
+            <div><span>Entrega pendente</span><strong>{formatNumber(delivery.pendingCount)}</strong><small>{formatNumber(delivery.overdueCount)} vencida(s)</small></div>
+            <div><span>Atraso médio no despacho</span><strong>{formatLogisticsDuration(dispatch.averageBreachMinutes, dispatch.averageBreachDays)}</strong><small>Somente despachos concluídos em atraso</small></div>
+            <div><span>Atraso médio na entrega</span><strong>{formatLogisticsDuration(delivery.averageBreachMinutes, delivery.averageBreachDays)}</strong><small>Somente entregas concluídas em atraso</small></div>
+          </div>
+        </article>
+        <article className="panel">
+          <PanelTitle title="Pós-venda e custo logístico" subtitle="Custos reversos são atribuídos à data do pedido pago, não à data de captura da cobrança." />
+          <dl className="logistics-economics-grid">
+            <div><dt>Pedidos com devolução</dt><dd>{formatNumber(economics.ordersWithReturn)}</dd></div>
+            <div><dt>Unidades devolvidas</dt><dd>{formatNumber(economics.returnedUnits)}</dd></div>
+            <div><dt>Custo reverso</dt><dd>{formatCurrency(economics.returnShippingCost)}</dd></div>
+            <div><dt>Frete total / valor pago</dt><dd>{formatTablePercent(economics.totalShippingCostOverGrossPercent)}</dd></div>
+          </dl>
+        </article>
+      </section>
+
+      <section className="content-grid equal">
+        <article className="panel">
+          <PanelTitle title="Estoque Full atual" subtitle="Posição corrente de fulfillment; este indicador não é reconstruído para datas passadas." />
+          {fulfillment.skuCount ? (
+            <div className="fulfillment-summary">
+              <div className="fulfillment-availability"><span style={{ width: `${fulfillment.availablePercent ?? 0}%` }} /></div>
+              <div className="fulfillment-numbers">
+                <div><span>Disponível</span><strong>{formatNumber(fulfillment.availableQuantity)}</strong></div>
+                <div><span>Indisponível</span><strong>{formatNumber(fulfillment.notAvailableQuantity)}</strong></div>
+                <div><span>SKUs</span><strong>{formatNumber(fulfillment.skuCount)}</strong></div>
+              </div>
+              <small>{formatTablePercent(fulfillment.availablePercent)} disponível{fulfillment.syncedAt ? ` · atualizado em ${new Intl.DateTimeFormat("pt-BR").format(new Date(fulfillment.syncedAt))}` : ""}</small>
+            </div>
+          ) : <p className="empty-table-message">Não há posição de estoque Full disponível para esta conta.</p>}
+        </article>
+        <article className="panel">
+          <PanelTitle title="Metas internas cadastradas" subtitle="Metas operacionais próprias, exibidas separadamente dos compromissos do Mercado Livre." />
+          {policies.length ? (
+            <div className="logistics-policies">
+              {policies.map((policy) => (
+                <div key={`${policy.name}-${policy.logisticType ?? "all"}`}>
+                  <span>{policy.name}</span>
+                  <strong>{formatLogisticsDuration(policy.targetMinutes, null)}</strong>
+                  <small>{policy.logisticType ?? "Todas as modalidades"} · {policy.startEventCode} → {policy.endEventCode}</small>
+                </div>
+              ))}
+            </div>
+          ) : <p className="empty-table-message">Nenhuma meta interna ativa foi cadastrada.</p>}
+        </article>
+      </section>
+
+      <section className="panel table-panel">
+        <PanelTitle title="SLA por evento e modalidade" subtitle="A tabela preserva a origem da meta e a qualidade da medição para manter a leitura auditável." />
+        {hasSlaData ? (
+          <div className="table-wrap">
+            <table className="logistics-sla-table">
+              <thead><tr><th>Evento</th><th>Modalidade</th><th>Referência</th><th>Leitura</th><th className="number-cell">Concluídos</th><th className="number-cell">No prazo</th><th className="number-cell">Atrasados</th><th className="number-cell">Vencidos</th></tr></thead>
+              <tbody>
+                {slaBreakdown.map((row) => (
+                  <tr key={`${row.eventName}-${row.logisticType}-${row.targetSource}-${row.measurementQuality}`}>
+                    <td className="primary-cell">{row.eventName}</td>
+                    <td>{row.logisticType ?? "—"}</td>
+                    <td>{logisticsSourceLabel(row.targetSource)}</td>
+                    <td><span className={`status-badge ${row.measurementQuality === "prospective" ? "status-good" : "status-neutral"}`}>{logisticsQualityLabel(row.measurementQuality)}</span></td>
+                    <td className="number-cell">{formatNumber(row.completedCount)}</td>
+                    <td className="number-cell">{formatTablePercent(row.onTimePercent)}</td>
+                    <td className="number-cell">{formatNumber(row.lateCount)}</td>
+                    <td className="number-cell">{formatNumber(row.overdueCount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <p className="empty-table-message">Ainda não há linhas de SLA no período selecionado.</p>}
+      </section>
+    </>
+  );
+}
+
 function CancellationTrend({ data }: { data: DashboardData }) {
   const points = data.cancellations.dailyCurrent;
   const maxCanceledOrders = Math.max(...points.map((point) => point.canceledOrdersCount), 1);
@@ -1428,47 +1576,28 @@ function SellerView({ data }: { data: DashboardData }) {
           value={reputationLabel(currentSnapshot?.reputationLevelId ?? null)}
           detail={snapshotDate ? `Snapshot de ${formatDate(snapshotDate)}` : "Sem snapshot no período"}
           icon={ShieldCheck}
-          tone={reputationSignal(currentSnapshot?.reputationLevelId ?? null)}
-          featured
+          tone="brand"
         />
         <KpiCard
           label="Reclamações ML"
           value={formatSellerRate(currentSnapshot?.claimsRate ?? null)}
           detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.claimsValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.claimsRate, comparisonSnapshot?.claimsRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Sem snapshot no período"}
           icon={Users}
-          tone={evaluateRateFraction(currentSnapshot?.claimsRate ?? null, SELLER_RATE_THRESHOLDS.claims)}
-          comparison={{
-            current: currentSnapshot?.claimsRate ?? null,
-            previous: comparisonSnapshot?.claimsRate ?? null,
-            periodDays: data.periodDays,
-            direction: "lowerIsBetter",
-          }}
+          tone="warning"
         />
         <KpiCard
           label="Atrasos ML"
           value={formatSellerRate(currentSnapshot?.delayedHandlingTimeRate ?? null)}
           detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.delayedHandlingTimeValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.delayedHandlingTimeRate, comparisonSnapshot?.delayedHandlingTimeRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Sem snapshot no período"}
           icon={Activity}
-          tone={evaluateRateFraction(currentSnapshot?.delayedHandlingTimeRate ?? null, SELLER_RATE_THRESHOLDS.delayedHandling)}
-          comparison={{
-            current: currentSnapshot?.delayedHandlingTimeRate ?? null,
-            previous: comparisonSnapshot?.delayedHandlingTimeRate ?? null,
-            periodDays: data.periodDays,
-            direction: "lowerIsBetter",
-          }}
+          tone="warning"
         />
         <KpiCard
           label="Cancelamentos ML"
           value={formatSellerRate(currentSnapshot?.cancellationsRate ?? null)}
           detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.cancellationsValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.cancellationsRate, comparisonSnapshot?.cancellationsRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Métrica oficial do Seller"}
           icon={X}
-          tone={evaluateRateFraction(currentSnapshot?.cancellationsRate ?? null, SELLER_RATE_THRESHOLDS.cancellations)}
-          comparison={{
-            current: currentSnapshot?.cancellationsRate ?? null,
-            previous: comparisonSnapshot?.cancellationsRate ?? null,
-            periodDays: data.periodDays,
-            direction: "lowerIsBetter",
-          }}
+          tone="warning"
         />
       </section>
 
@@ -1487,50 +1616,28 @@ function SellerView({ data }: { data: DashboardData }) {
           value={formatNumber(cancellations.canceledOrdersCount)}
           detail={cancellations.canceledOrdersPercent === null ? "Sem pedidos no período" : `${formatPercent(cancellations.canceledOrdersPercent)} dos ${formatNumber(cancellations.ordersCount)} pedidos criados`}
           icon={X}
-          tone={evaluateRate(cancellations.canceledOrdersPercent, SELLER_RATE_THRESHOLDS.canceledOrdersShare)}
-          comparison={{
-            current: cancellations.canceledOrdersCount,
-            previous: previousCancellations?.canceledOrdersCount ?? null,
-            periodDays: data.periodDays,
-            direction: "lowerIsBetter",
-          }}
+          tone="warning"
         />
         <KpiCard
           label="Valor bruto cancelado"
           value={formatCurrency(cancellations.canceledAmount)}
           detail="Soma do valor original dos pedidos cancelados"
           icon={CircleDollarSign}
-          comparison={{
-            current: cancellations.canceledAmount,
-            previous: previousCancellations?.canceledAmount ?? null,
-            periodDays: data.periodDays,
-            direction: "lowerIsBetter",
-          }}
+          tone="warning"
         />
         <KpiCard
           label="Impacto sobre o valor"
           value={formatTablePercent(cancellations.canceledAmountPercent)}
           detail={`De ${formatCurrency(cancellations.grossAmount)} em pedidos criados`}
           icon={Gauge}
-          tone={evaluateRate(cancellations.canceledAmountPercent, SELLER_RATE_THRESHOLDS.canceledAmountShare)}
-          comparison={{
-            current: cancellations.canceledAmountPercent,
-            previous: previousCancellations?.canceledAmountPercent ?? null,
-            periodDays: data.periodDays,
-            direction: "lowerIsBetter",
-          }}
+          tone="warning"
         />
         <KpiCard
           label="Ticket cancelado"
           value={cancellations.averageCanceledTicket === null ? "—" : formatCurrency(cancellations.averageCanceledTicket)}
           detail={previousCancellations ? `Comparação: ${formatNumber(previousCancellations.canceledOrdersCount)} cancelamentos no período anterior` : "Sem base de comparação"}
           icon={ShoppingBag}
-          comparison={{
-            current: cancellations.averageCanceledTicket,
-            previous: previousCancellations?.averageCanceledTicket ?? null,
-            periodDays: data.periodDays,
-            direction: "lowerIsBetter",
-          }}
+          tone="neutral"
         />
       </section>
 
@@ -1675,6 +1782,8 @@ export default function Home() {
         return <PerformanceView data={dashboardData} />;
       case "traffic":
         return <TrafficView data={dashboardData} />;
+      case "logistics":
+        return <LogisticsView data={dashboardData} />;
       case "seller":
         return <SellerView data={dashboardData} />;
       default:
