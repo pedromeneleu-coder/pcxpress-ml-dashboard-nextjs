@@ -116,6 +116,7 @@ type LogisticsSlaRecord = {
   late_count: number | string | null;
   pending_count: number | string | null;
   overdue_count: number | string | null;
+  avg_elapsed_minutes: number | string | null;
   avg_breach_minutes: number | string | null;
   avg_breach_days: number | string | null;
   cancelled_count: number | string | null;
@@ -626,6 +627,7 @@ function buildLogisticsSlaSummary(records: LogisticsSlaRecord[]): LogisticsSlaSu
       acc.overdueCount += toNumber(record.overdue_count);
       acc.cancelledCount += toNumber(record.cancelled_count);
       acc.terminalWithoutCompletionCount += toNumber(record.terminal_without_completion_count);
+      acc.elapsedMinutesTotal += toNumber(record.avg_elapsed_minutes) * toNumber(record.completed_count);
       acc.breachMinutesTotal += toNumber(record.avg_breach_minutes) * lateCount;
       acc.breachDaysTotal += toNumber(record.avg_breach_days) * lateCount;
       return acc;
@@ -639,6 +641,7 @@ function buildLogisticsSlaSummary(records: LogisticsSlaRecord[]): LogisticsSlaSu
       overdueCount: 0,
       cancelledCount: 0,
       terminalWithoutCompletionCount: 0,
+      elapsedMinutesTotal: 0,
       breachMinutesTotal: 0,
       breachDaysTotal: 0,
     },
@@ -654,6 +657,7 @@ function buildLogisticsSlaSummary(records: LogisticsSlaRecord[]): LogisticsSlaSu
     cancelledCount: totals.cancelledCount,
     terminalWithoutCompletionCount: totals.terminalWithoutCompletionCount,
     onTimePercent: totals.completedCount > 0 ? (totals.onTimeCount / totals.completedCount) * 100 : null,
+    averageElapsedMinutes: totals.completedCount > 0 ? totals.elapsedMinutesTotal / totals.completedCount : null,
     averageBreachMinutes: totals.lateCount > 0 ? totals.breachMinutesTotal / totals.lateCount : null,
     averageBreachDays: totals.lateCount > 0 ? totals.breachDaysTotal / totals.lateCount : null,
   };
@@ -976,7 +980,7 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
         config,
         appendQuery("dashboard_daily_logistics_sla", {
           select:
-            "sale_date,logistic_type,event_name,target_source,measurement_quality,shipments_count,completed_count,on_time_count,late_count,pending_count,overdue_count,avg_breach_minutes,avg_breach_days,cancelled_count,terminal_without_completion_count",
+            "sale_date,logistic_type,event_name,target_source,measurement_quality,shipments_count,completed_count,on_time_count,late_count,pending_count,overdue_count,avg_elapsed_minutes,avg_breach_minutes,avg_breach_days,cancelled_count,terminal_without_completion_count",
           account_id: accountFilter,
           ...logisticsPeriodFilter,
           order: "sale_date.asc",
