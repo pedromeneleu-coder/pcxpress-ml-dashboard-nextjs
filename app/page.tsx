@@ -146,6 +146,7 @@ function formatLogisticsDuration(minutes: number | null, days: number | null) {
 
   if (minutes === null) return "—";
   if (minutes < 60) return `${Math.round(minutes)} min`;
+  if (minutes >= 1440) return `${(minutes / 1440).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} dia(s)`;
   return `${(minutes / 60).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h`;
 }
 
@@ -166,6 +167,46 @@ function logisticsQualityLabel(value: string) {
     internal_policy: "Meta interna",
   };
   return labels[value] ?? value;
+}
+
+type LogisticsEventAverage = {
+  eventName: string;
+  completedCount: number;
+  onTimeCount: number;
+  lateCount: number;
+  overdueCount: number;
+  averageElapsedMinutes: number;
+};
+
+function buildLogisticsEventAverages(rows: DashboardData["logistics"]["slaBreakdown"]): LogisticsEventAverage[] {
+  const events = new Map<string, LogisticsEventAverage & { elapsedTotal: number }>();
+
+  for (const row of rows) {
+    if (!row.completedCount || row.averageElapsedMinutes === null) continue;
+
+    const current = events.get(row.eventName) ?? {
+      eventName: row.eventName,
+      completedCount: 0,
+      onTimeCount: 0,
+      lateCount: 0,
+      overdueCount: 0,
+      averageElapsedMinutes: 0,
+      elapsedTotal: 0,
+    };
+    current.completedCount += row.completedCount;
+    current.onTimeCount += row.onTimeCount;
+    current.lateCount += row.lateCount;
+    current.overdueCount += row.overdueCount;
+    current.elapsedTotal += row.averageElapsedMinutes * row.completedCount;
+    events.set(row.eventName, current);
+  }
+
+  return Array.from(events.values())
+    .map(({ elapsedTotal, ...event }) => ({
+      ...event,
+      averageElapsedMinutes: elapsedTotal / event.completedCount,
+    }))
+    .sort((a, b) => b.averageElapsedMinutes - a.averageElapsedMinutes);
 }
 
 function formatDate(value: string | null) {
@@ -1382,20 +1423,40 @@ function LogisticsView({ data }: { data: DashboardData }) {
   const { dispatch, delivery, comparisonDispatch, comparisonDelivery, economics, comparisonEconomics, fulfillment, policies, slaBreakdown } = data.logistics;
   const hasSlaData = slaBreakdown.length > 0;
   const hasEconomicsData = economics.ordersCount > 0 || economics.returnShippingCost > 0;
+  const eventAverages = buildLogisticsEventAverages(slaBreakdown);
+  const bottleneck = eventAverages[0] ?? null;
+  const maxEventAverage = Math.max(...eventAverages.map((event) => event.averageElapsedMinutes), 1);
+  const activeOverdue = dispatch.overdueCount + delivery.overdueCount;
 
   return (
     <>
-      <div className="context-banner logistics-context-banner">
-        <div>
-          <Truck size={16} />
-          <span>
-            <strong>SLA oficial:</strong> os cards de despacho e entrega consideram somente medições prospectivas, isto é, promessas capturadas antes da conclusão do evento.
+      <section className="logistics-hero">
+        <div className="logistics-hero-copy">
+          <span className="logistics-eyebrow"><Truck size={14} /> Controle logístico</span>
+          <h2>Do pedido à entrega, sem zonas cegas</h2>
+          <p>SLA, gargalos e impacto financeiro reunidos em uma leitura operacional do período.</p>
+          <span className={`logistics-live-state ${hasSlaData ? "is-live" : ""}`}>
+            <i /> {hasSlaData ? "Dados logísticos ativos" : "Aguardando dados logísticos"}
           </span>
         </div>
-        <span className={`status-badge ${hasSlaData ? "status-good" : "status-neutral"}`}>
-          {hasSlaData ? "Dados logísticos ativos" : "Aguardando dados logísticos"}
-        </span>
-      </div>
+        <div className="logistics-hero-stats">
+          <div>
+            <span>Maior tempo médio</span>
+            <strong>{bottleneck ? formatLogisticsDuration(bottleneck.averageElapsedMinutes, null) : "—"}</strong>
+            <small>{bottleneck?.eventName ?? "Sem eventos concluídos"}</small>
+          </div>
+          <div>
+            <span>Vencidos agora</span>
+            <strong>{formatNumber(activeOverdue)}</strong>
+            <small>Despacho + entrega</small>
+          </div>
+          <div>
+            <span>Custo reverso</span>
+            <strong>{formatTablePercent(economics.returnCostOverGrossPercent)}</strong>
+            <small>Sobre valor pago</small>
+          </div>
+        </div>
+      </section>
 
       <section className="kpi-grid">
         <KpiCard
@@ -1430,6 +1491,59 @@ function LogisticsView({ data }: { data: DashboardData }) {
           tone="warning"
           comparison={{ current: economics.returnCostOverGrossPercent, previous: comparisonEconomics?.returnCostOverGrossPercent ?? null, periodDays: data.periodDays }}
         />
+      </section>
+
+      <section className="content-grid two-one logistics-bottleneck-grid">
+        <article className="panel event-sla-panel">
+          <PanelTitle
+            title="Tempo médio por evento logístico"
+            subtitle="Média real ponderada pelo volume concluído; barras maiores indicam etapas mais demoradas."
+            action={bottleneck ? <span className="status-badge status-warning">Gargalo: {bottleneck.eventName}</span> : null}
+          />
+          {eventAverages.length ? (
+            <div className="event-sla-bars">
+              {eventAverages.map((event, index) => {
+                const onTimePercent = event.completedCount > 0 ? (event.onTimeCount / event.completedCount) * 100 : null;
+                return (
+                  <div className={`event-sla-row ${index === 0 ? "is-bottleneck" : ""}`} key={event.eventName}>
+                    <div className="event-sla-label">
+                      <span>{index + 1}</span>
+                      <div>
+                        <strong>{event.eventName}</strong>
+                        <small>{formatNumber(event.completedCount)} concluídos · {formatTablePercent(onTimePercent)} no prazo</small>
+                      </div>
+                    </div>
+                    <div className="event-sla-track">
+                      <span style={{ width: `${Math.max((event.averageElapsedMinutes / maxEventAverage) * 100, 4)}%` }} />
+                    </div>
+                    <strong className="event-sla-value">{formatLogisticsDuration(event.averageElapsedMinutes, null)}</strong>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="chart-empty-state"><Activity size={18} /> Ainda não há eventos concluídos para calcular o tempo médio.</div>
+          )}
+        </article>
+
+        <article className="panel bottleneck-summary-panel">
+          <PanelTitle title="Leitura do gargalo" subtitle="Ponto de atenção prioritário no período." />
+          {bottleneck ? (
+            <>
+              <div className="bottleneck-spotlight">
+                <span><Gauge size={18} /> Etapa mais lenta</span>
+                <strong>{bottleneck.eventName}</strong>
+                <b>{formatLogisticsDuration(bottleneck.averageElapsedMinutes, null)}</b>
+                <small>Média de {formatNumber(bottleneck.completedCount)} evento(s) concluído(s)</small>
+              </div>
+              <div className="bottleneck-facts">
+                <div><span>Atrasados</span><strong>{formatNumber(bottleneck.lateCount)}</strong></div>
+                <div><span>Vencidos ativos</span><strong>{formatNumber(bottleneck.overdueCount)}</strong></div>
+              </div>
+              <p className="bottleneck-guidance">Priorize a causa operacional desta etapa antes de otimizar eventos mais curtos.</p>
+            </>
+          ) : <p className="empty-table-message">O gargalo será identificado quando houver eventos concluídos.</p>}
+        </article>
       </section>
 
       <section className="content-grid equal">
@@ -1489,7 +1603,7 @@ function LogisticsView({ data }: { data: DashboardData }) {
         {hasSlaData ? (
           <div className="table-wrap">
             <table className="logistics-sla-table">
-              <thead><tr><th>Evento</th><th>Modalidade</th><th>Referência</th><th>Leitura</th><th className="number-cell">Concluídos</th><th className="number-cell">No prazo</th><th className="number-cell">Atrasados</th><th className="number-cell">Vencidos</th></tr></thead>
+              <thead><tr><th>Evento</th><th>Modalidade</th><th>Referência</th><th>Leitura</th><th className="number-cell">Tempo médio</th><th className="number-cell">Concluídos</th><th className="number-cell">No prazo</th><th className="number-cell">Atrasados</th><th className="number-cell">Vencidos</th></tr></thead>
               <tbody>
                 {slaBreakdown.map((row) => (
                   <tr key={`${row.eventName}-${row.logisticType}-${row.targetSource}-${row.measurementQuality}`}>
@@ -1497,6 +1611,7 @@ function LogisticsView({ data }: { data: DashboardData }) {
                     <td>{row.logisticType ?? "—"}</td>
                     <td>{logisticsSourceLabel(row.targetSource)}</td>
                     <td><span className={`status-badge ${row.measurementQuality === "prospective" ? "status-good" : "status-neutral"}`}>{logisticsQualityLabel(row.measurementQuality)}</span></td>
+                    <td className="number-cell primary-cell">{formatLogisticsDuration(row.averageElapsedMinutes, null)}</td>
                     <td className="number-cell">{formatNumber(row.completedCount)}</td>
                     <td className="number-cell">{formatTablePercent(row.onTimePercent)}</td>
                     <td className="number-cell">{formatNumber(row.lateCount)}</td>
