@@ -1,424 +1,379 @@
-:root {
-  --brand: #00d8ff;
-  --brand-dark: #00a9cd;
-  --ink: #101114;
-  --muted: #66707a;
-  --line: #dfe4e8;
-  --soft: #f4f6f7;
-  --panel: #ffffff;
-  --sidebar: #050607;
-  --green: #00a878;
-  --amber: #e39a19;
-  --red: #e05252;
-}
+export type CatalogTone = "good" | "warning" | "neutral" | "brand";
 
-* { box-sizing: border-box; }
-html { background: var(--soft); }
-body {
-  margin: 0;
-  background: var(--soft);
-  color: var(--ink);
-  font-family: Rubik, Inter, "Segoe UI", Arial, sans-serif;
-  letter-spacing: 0;
-}
-button, select, input { font: inherit; }
-button { letter-spacing: 0; }
+export type ComparisonMode =
+  | "previousPeriod"
+  | "previousMonthEquivalent"
+  | "previousMonthFull"
+  | "custom"
+  | "none";
 
-.fatal-state { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #f4f6f7; }
-.fatal-state section { width: min(440px, 100%); padding: 28px; border: 1px solid var(--line); border-top: 3px solid var(--brand); border-radius: 7px; background: white; }
-.fatal-state h1 { margin: 0 0 8px; font-size: 22px; }
-.fatal-state p { margin: 0 0 20px; color: var(--muted); line-height: 1.5; }
-.fatal-state button, .fatal-state a { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; padding: 0 14px; border: 0; border-radius: 5px; background: #101114; color: white; font-weight: 700; text-decoration: none; cursor: pointer; }
+export type CatalogRow = {
+  source: string;
+  status: string;
+  count: number;
+  share: string;
+  tone: CatalogTone;
+};
 
-.dashboard-shell { min-height: 100vh; display: flex; }
-.sidebar {
-  width: 242px;
-  min-height: 100vh;
-  position: fixed;
-  inset: 0 auto 0 0;
-  z-index: 30;
-  background: var(--sidebar);
-  color: white;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid #1b2023;
-}
-.brand-block { height: 112px; padding: 20px 22px 14px; border-bottom: 1px solid #1b2023; }
-.brand-block img { width: 150px; height: auto; object-fit: contain; object-position: left center; }
-.brand-block span { display: block; margin-top: -6px; color: #7f8b91; font-size: 10px; text-transform: uppercase; font-weight: 700; }
-.sidebar nav { padding: 18px 12px; flex: 1; }
-.nav-section-label { margin: 0 12px 8px; color: #6f7a80; font-size: 10px; text-transform: uppercase; font-weight: 800; }
-.nav-section-label.secondary { margin-top: 24px; }
-.sidebar nav button {
-  border: 0;
-  width: 100%;
-  min-height: 42px;
-  padding: 0 12px;
-  margin-bottom: 3px;
-  background: transparent;
-  color: #aeb7bc;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  border-radius: 6px;
-  cursor: pointer;
-  text-align: left;
-  transition: 160ms ease;
-}
-.sidebar nav button:hover { background: #121719; color: white; }
-.sidebar nav button.active { background: #10252a; color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
-.sidebar nav button span { font-size: 13px; font-weight: 650; }
-.sidebar-footer { margin: 0 16px 16px; padding: 14px; border: 1px solid #232a2e; border-radius: 6px; display: flex; align-items: center; gap: 10px; }
-.sidebar-footer div { display: flex; flex-direction: column; gap: 2px; }
-.sidebar-footer strong { font-size: 11px; }
-.sidebar-footer small { color: #7d888d; font-size: 10px; }
-.health-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(0,168,120,.14); }
+export type TopProduct = {
+  itemId: string;
+  title: string;
+  catalogSource: "items_current" | "order_items_fallback" | string;
+  visits: number;
+  unitsSold: number;
+  ordersCount: number;
+  grossAmount: number;
+  conversionRatePercent: number | null;
+  availableQuantity: number | null;
+  status: string | null;
+  thumbnail: string | null;
+  permalink: string | null;
+};
 
-.main-stage { margin-left: 242px; min-width: 0; width: calc(100% - 242px); }
-.topbar { height: 70px; background: white; border-bottom: 1px solid var(--line); display: flex; align-items: center; padding: 0 28px; position: sticky; top: 0; z-index: 20; }
-.account-filter { display: flex; align-items: center; gap: 10px; min-width: 190px; }
-.account-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 6px; background: #e6fbff; color: #0088a5; }
-.account-filter div { display: flex; flex-direction: column; flex: 1; }
-.account-filter small { color: var(--muted); font-size: 10px; }
-.account-filter strong { font-size: 13px; }
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-.sync-state { display: flex; align-items: center; gap: 6px; color: #087c5c; background: #e9f8f3; padding: 7px 10px; border-radius: 5px; font-size: 11px; font-weight: 700; }
-.sync-warning { color: #9a6200; background: #fff4df; }
-.period-control { display: flex; background: var(--soft); padding: 3px; border-radius: 6px; }
-.period-control button { min-width: 42px; height: 30px; border: 0; background: transparent; color: var(--muted); border-radius: 4px; font-size: 11px; font-weight: 700; cursor: pointer; }
-.period-control button.active { background: #101114; color: white; }
-.date-filter-button { min-height: 36px; padding: 0 11px; border: 1px solid var(--line); border-radius: 6px; background: white; color: #45515a; display: inline-flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 800; cursor: pointer; }
-.date-filter-button:hover, .date-filter-button.active { color: #007f99; border-color: #77d8ea; background: #eefcff; }
-.icon-button, .menu-button { width: 36px; height: 36px; border: 1px solid var(--line); background: white; display: grid; place-items: center; border-radius: 6px; cursor: pointer; color: #45515a; }
-.icon-button:hover, .menu-button:hover { color: #008ca8; border-color: #8adff0; }
-.menu-button { display: none; margin-right: 12px; }
-.spin-icon { animation: spin 900ms linear infinite; }
+export type ProductPeriodMetrics = {
+  visits: number;
+  unitsSold: number;
+  ordersCount: number;
+  grossAmount: number;
+  conversionRatePercent: number | null;
+};
 
-.page-content { width: min(1440px, 100%); margin: 0 auto; padding: 28px; }
-.page-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
-.page-title-row h1 { margin: 2px 0 5px; font-size: 27px; line-height: 1.2; letter-spacing: 0; }
-.page-title-row > div > p:last-child { margin: 0; color: var(--muted); font-size: 13px; }
-.eyebrow { margin: 0; color: #008ca8; font-size: 10px; font-weight: 800; text-transform: uppercase; }
-.date-chip { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 9px 11px; border: 1px solid var(--line); background: white; border-radius: 6px; color: var(--muted); font-size: 11px; }
-.date-chip strong { color: var(--ink); }
+export type ProductComparison = {
+  itemId: string;
+  title: string;
+  catalogSource: string;
+  current: ProductPeriodMetrics;
+  previous: ProductPeriodMetrics;
+  currentRank: number | null;
+  previousRank: number | null;
+};
 
-.date-filter-panel { margin-bottom: 22px; padding: 21px; border: 1px solid #a9dce6; border-top: 3px solid var(--brand-dark); border-radius: 7px; background: white; box-shadow: 0 10px 32px rgba(16, 17, 20, .07); }
-.date-filter-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; margin-bottom: 18px; }
-.date-filter-heading h2 { margin: 4px 0 5px; font-size: 17px; }
-.date-filter-heading p { margin: 0; color: var(--muted); font-size: 11px; }
-.date-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.date-filter-grid fieldset { min-width: 0; margin: 0; padding: 15px; border: 1px solid var(--line); border-radius: 6px; }
-.date-filter-grid legend { padding: 0 7px; color: var(--ink); font-size: 11px; font-weight: 800; }
-.date-filter-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 800; text-transform: uppercase; }
-.date-filter-grid input, .date-filter-grid select { width: 100%; min-height: 38px; padding: 0 10px; border: 1px solid #cfd7dc; border-radius: 5px; background: white; color: var(--ink); font-size: 11px; font-weight: 600; text-transform: none; outline: none; }
-.date-filter-grid input:focus, .date-filter-grid select:focus { border-color: var(--brand-dark); box-shadow: 0 0 0 3px rgba(0, 169, 205, .12); }
-.date-input-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.date-filter-grid fieldset > small { display: block; margin-top: 9px; color: var(--muted); font-size: 9px; }
-.comparison-dates { margin-top: 10px; }
-.date-filter-alert { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 12px; border-radius: 5px; font-size: 10px; font-weight: 700; }
-.date-filter-alert.warning { color: #8a5800; background: #fff5e2; border: 1px solid #f1d69e; }
-.date-filter-alert.error { color: #a83232; background: #fceded; border: 1px solid #efc0c0; }
-.active-date-warning { display: flex; align-items: center; gap: 8px; margin: -4px 0 18px; padding: 9px 11px; border: 1px solid #f1d69e; border-radius: 5px; background: #fff8ea; color: #815300; font-size: 10px; font-weight: 700; }
-.active-date-warning svg { flex: 0 0 auto; }
-.date-filter-footnote { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; color: var(--muted); font-size: 9px; line-height: 1.55; }
-.date-filter-footnote svg { flex: 0 0 auto; color: #008ca8; }
-.date-filter-footnote strong { color: var(--ink); }
-.date-filter-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-.primary-button, .secondary-button { min-height: 36px; padding: 0 13px; border-radius: 5px; font-size: 10px; font-weight: 800; cursor: pointer; }
-.primary-button { border: 1px solid var(--ink); background: var(--ink); color: white; }
-.primary-button:hover { background: #25292d; }
-.secondary-button { border: 1px solid var(--line); background: white; color: #4f5c63; }
-.secondary-button:hover { border-color: #9caab2; color: var(--ink); }
+export type SalesSummary = {
+  visits: number | null;
+  unitsSold: number;
+  ordersCount: number;
+  grossAmount: number;
+  paidGrossAmount: number | null;
+  avgTicket: number | null;
+  conversionRatePercent: number | null;
+  itemsCount: number | null;
+  fallbackItemsCount: number | null;
+  firstPerformanceDate: string | null;
+  lastPerformanceDate: string | null;
+};
 
-.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; margin-bottom: 16px; }
-.kpi-grid.executive-kpis { grid-template-columns: 1.25fr repeat(3, minmax(0,1fr)); }
-.kpi-card { background: white; border: 1px solid var(--line); border-radius: 7px; padding: 17px 18px 16px; min-height: 154px; position: relative; overflow: hidden; }
-.kpi-card::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #dfe4e8; }
-.kpi-brand::after { background: var(--brand); }
-.kpi-good::after { background: var(--green); }
-.kpi-warning::after { background: var(--amber); }
-.kpi-topline { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11px; font-weight: 700; }
-.icon-box { width: 31px; height: 31px; border-radius: 5px; background: #f1f4f5; display: grid; place-items: center; color: #5b6870; }
-.kpi-brand .icon-box { color: #007f99; background: #e4faff; }
-.kpi-good .icon-box { color: #087b5d; background: #e9f8f3; }
-.kpi-warning .icon-box { color: #a76c06; background: #fff7e8; }
-.kpi-card > strong { display: block; margin-top: 10px; font-size: 24px; line-height: 1.15; font-variant-numeric: tabular-nums; }
-.kpi-card > small { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; line-height: 1.4; }
-.comparison-indicator { width: fit-content; min-height: 20px; margin-top: 8px; padding: 3px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.comparison-up { color: #087b5d; background: #e9f8f3; }
-.comparison-down { color: #ad3434; background: #fcecec; }
-.comparison-neutral { color: #657078; background: #eef1f2; }
-.comparison-compact { min-height: auto; margin-top: 0; padding: 0; background: transparent; font-size: 8px; }
-.kpi-featured { background: #07090a; border-color: #07090a; color: white; }
-.kpi-featured::after { background: var(--brand); }
-.kpi-featured .kpi-topline, .kpi-featured > small { color: #aeb8bd; }
-.kpi-featured .icon-box { color: var(--brand); background: #10282d; }
-.kpi-featured > strong { font-size: 29px; }
-.kpi-featured .comparison-neutral { color: #bac4c8; background: #20262a; }
+export type DailyPerformancePoint = {
+  date: string;
+  visits: number | null;
+  unitsSold: number;
+  ordersCount: number;
+  grossAmount: number;
+  avgTicket: number | null;
+  unitsPerOrder: number | null;
+  conversionRatePercent: number | null;
+};
 
-.content-grid { display: grid; gap: 16px; margin-bottom: 16px; }
-.content-grid.two-one { grid-template-columns: minmax(0, 1.65fr) minmax(300px, .85fr); }
-.content-grid.equal { grid-template-columns: repeat(2, minmax(0,1fr)); }
-.panel { background: white; border: 1px solid var(--line); border-radius: 7px; padding: 20px; min-width: 0; }
-.panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 19px; }
-.panel-heading h2 { margin: 0; font-size: 14px; line-height: 1.3; }
-.panel-heading p { margin: 5px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; max-width: 670px; }
-.trend-panel { margin-bottom: 16px; }
-.chart-tabs { display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 6px; background: var(--soft); }
-.chart-tabs button { min-height: 29px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 9px; font-weight: 800; cursor: pointer; white-space: nowrap; }
-.chart-tabs button:hover { color: var(--ink); }
-.chart-tabs button.active { background: var(--ink); color: white; }
-.chart-legend { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: -4px 0 12px; color: var(--muted); font-size: 9px; }
-.chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
-.chart-line { width: 18px; height: 3px; border-radius: 3px; display: inline-block; }
-.chart-line.current { background: var(--brand-dark); }
-.chart-line.previous { background: var(--amber); }
-.chart-wrap { width: 100%; overflow-x: auto; overflow-y: hidden; }
-.comparison-chart { width: 100%; min-width: 520px; height: auto; display: block; }
-.chart-grid-line { stroke: #e5e9eb; stroke-width: 1; stroke-dasharray: 4 5; }
-.chart-axis-text { fill: #758087; font-size: 9px; font-weight: 700; }
-.trend-line { fill: none; stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.trend-line.current { stroke: var(--brand-dark); }
-.trend-line.previous { stroke: var(--amber); }
-.chart-point { stroke: white; stroke-width: 1.4; vector-effect: non-scaling-stroke; }
-.chart-point.current { fill: var(--brand-dark); }
-.chart-point.previous { fill: var(--amber); }
-.chart-hit-area { fill: transparent; cursor: crosshair; }
-.chart-hover-line { stroke: #7d888e; stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
-.chart-hover-point { stroke: white; stroke-width: 2; vector-effect: non-scaling-stroke; }
-.chart-hover-point.current { fill: var(--brand-dark); }
-.chart-hover-point.previous { fill: var(--amber); }
-.chart-tooltip-box { fill: #101114; stroke: #30383c; stroke-width: 1; }
-.chart-tooltip-title { fill: white; font-size: 10px; font-weight: 800; }
-.chart-tooltip-text { fill: #c4ccd0; font-size: 8.5px; font-weight: 600; }
-.chart-tooltip-change { font-size: 8.5px; font-weight: 800; }
-.chart-tooltip-change.up { fill: #47d7ac; }
-.chart-tooltip-change.down { fill: #ff8b8b; }
-.chart-tooltip-change.neutral { fill: #b7c0c4; }
-.chart-empty-state { min-height: 180px; border: 1px dashed #cfd6da; border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 10px; text-align: center; padding: 20px; }
-.commerce-flow-panel { margin-bottom: 16px; }
-.commerce-flow { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); align-items: stretch; gap: 10px; }
-.commerce-flow-step { position: relative; min-height: 116px; padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: #f9fbfb; }
-.commerce-flow-step .flow-icon { position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 5px; color: #087f99; background: #e4faff; }
-.commerce-flow-step small { display: block; color: #718087; font-size: 8px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
-.commerce-flow-step strong { display: block; margin-top: 18px; max-width: calc(100% - 34px); font-size: 20px; font-variant-numeric: tabular-nums; }
-.commerce-flow-step p { margin: 6px 0 0; color: var(--muted); font-size: 9px; }
-.commerce-flow-step.flow-result { color: white; border-color: #07090a; background: #07090a; }
-.commerce-flow-step.flow-result small, .commerce-flow-step.flow-result p { color: #aeb8bd; }
-.commerce-flow-step.flow-result .flow-icon { color: #d69216; background: #2d2415; }
-.flow-arrow { align-self: center; color: #7c888e; font-size: 18px; font-weight: 800; }
-.tiny-label { background: #f1f4f5; color: #56636b; border-radius: 4px; padding: 5px 7px; font-size: 10px; font-weight: 700; white-space: nowrap; }
-.coverage-bar { width: 100%; height: 20px; display: flex; overflow: hidden; border-radius: 4px; background: #eef1f2; }
-.coverage-current { background: var(--brand); }
-.coverage-history { background: var(--amber); }
-.legend-row { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 11px; color: var(--muted); font-size: 10px; }
-.legend-row span { display: flex; align-items: center; gap: 6px; }
-.legend-row b { color: var(--ink); }
-.legend-dot { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
-.dot-cyan { background: var(--brand); }
-.dot-amber { background: var(--amber); }
-.dot-neutral { background: #c7ced1; }
-.coverage-numbers { display: grid; grid-template-columns: repeat(3,1fr); border-top: 1px solid var(--line); margin-top: 20px; padding-top: 16px; }
-.coverage-numbers div { display: flex; flex-direction: column; gap: 4px; border-right: 1px solid var(--line); padding-left: 16px; }
-.coverage-numbers div:first-child { padding-left: 0; }
-.coverage-numbers div:last-child { border-right: 0; }
-.coverage-numbers strong { font-size: 19px; }
-.coverage-numbers span { color: var(--muted); font-size: 10px; }
-.decision-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 16px; }
-.decision-list li { display: flex; align-items: flex-start; gap: 11px; }
-.decision-icon { width: 31px; height: 31px; flex: 0 0 31px; border-radius: 5px; display: grid; place-items: center; }
-.decision-icon.warning { color: #a76c06; background: #fff6e5; }
-.decision-icon.good { color: #087b5d; background: #e9f8f3; }
-.decision-icon.brand { color: #007f99; background: #e4faff; }
-.decision-list div { display: flex; flex-direction: column; gap: 4px; }
-.decision-list strong { font-size: 11px; }
-.decision-list small { color: var(--muted); font-size: 9px; line-height: 1.45; }
-.table-panel { margin-bottom: 16px; }
-.text-button { border: 0; background: transparent; color: #008ca8; font-size: 10px; font-weight: 800; cursor: pointer; }
-.table-wrap { overflow-x: auto; }
-.empty-table-message { margin: 0; padding: 18px 12px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); }
-table { width: 100%; border-collapse: collapse; min-width: 650px; }
-th { text-align: left; color: #79838a; text-transform: uppercase; font-size: 9px; padding: 0 12px 10px; border-bottom: 1px solid var(--line); }
-td { padding: 13px 12px; border-bottom: 1px solid #edf0f1; font-size: 11px; color: #4d5961; }
-tbody tr:last-child td { border-bottom: 0; }
-.primary-cell { color: var(--ink); font-weight: 700; }
-.number-cell { text-align: right; font-variant-numeric: tabular-nums; }
-.product-comparison-table { min-width: 1040px; }
-.product-name-cell { width: 250px; max-width: 250px; }
-.product-name-cell strong, .product-name-cell small, .comparison-value-cell strong, .comparison-value-cell small { display: block; }
-.product-name-cell strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.product-name-cell small, .comparison-value-cell small { margin-top: 3px; color: var(--muted); font-size: 8px; font-weight: 600; }
-.comparison-value-cell strong { color: var(--ink); font-size: 10px; }
-.product-variation { min-width: 68px; width: fit-content; min-height: 23px; padding: 4px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 800; white-space: nowrap; }
-.variation-up { color: #087b5d; background: #e9f8f3; }
-.variation-down { color: #ad3434; background: #fcecec; }
-.variation-neutral { color: #657078; background: #eef1f2; }
-.rank-cell { min-width: 82px; display: flex; flex-direction: column; gap: 3px; }
-.rank-cell strong { color: var(--ink); font-size: 10px; }
-.rank-cell small { font-size: 8px; font-weight: 700; }
-.rank-up small { color: #087b5d; }
-.rank-down small { color: #ad3434; }
-.rank-neutral small { color: var(--muted); }
-.status-badge { display: inline-flex; align-items: center; white-space: nowrap; padding: 5px 7px; border-radius: 4px; font-size: 9px; font-weight: 800; }
-.status-good { background: #e9f8f3; color: #087b5d; }
-.status-warning { background: #fff4df; color: #9a6200; }
-.status-neutral { background: #eef1f2; color: #5a666d; }
+export type SellerProfile = {
+  sellerId: number | null;
+  nickname: string | null;
+  reputationRealLevel: string | null;
+  powerSellerStatus: string | null;
+  protectionEndDate: string | null;
+  transactionsPeriod: string | null;
+  syncedAt: string | null;
+};
 
-.context-banner { min-height: 48px; margin-bottom: 16px; padding: 10px 13px; border: 1px solid #9fe3f0; border-left: 4px solid var(--brand); background: #edfbfe; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #4d6068; font-size: 10px; }
-.context-banner div { display: flex; align-items: center; gap: 8px; }
-.context-banner strong { color: var(--ink); }
-.metric-bars { display: flex; flex-direction: column; gap: 19px; }
-.metric-bar-row > div:first-child { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 7px; }
-.metric-bar-row strong { font-variant-numeric: tabular-nums; }
-.track { width: 100%; height: 8px; border-radius: 3px; background: #eef1f2; overflow: hidden; }
-.track span { display: block; height: 100%; background: var(--brand); border-radius: 3px; }
-.metric-bar-row.amber .track span { background: var(--amber); }
-.rule-list { display: flex; flex-direction: column; gap: 14px; }
-.rule-list > div { display: grid; grid-template-columns: 31px 1fr; gap: 10px; align-items: start; }
-.rule-list > div > span { width: 28px; height: 28px; border-radius: 5px; display: grid; place-items: center; background: #101114; color: var(--brand); font-size: 9px; font-weight: 800; }
-.rule-list p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
-.rule-list strong { color: var(--ink); }
-.action-grid { display: flex; flex-direction: column; }
-.action-grid > div { display: grid; grid-template-columns: 32px 1fr auto; gap: 10px; align-items: center; padding: 11px 0; border-bottom: 1px solid #edf0f1; }
-.action-grid > div:last-child { border-bottom: 0; }
-.action-icon { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 5px; background: #e9f9fc; color: #0087a2; }
-.action-grid p { margin: 0; display: flex; flex-direction: column; gap: 2px; }
-.action-grid strong { font-size: 10px; }
-.action-grid small { color: var(--muted); font-size: 9px; }
-.action-grid b { color: #8a959b; font-size: 9px; }
-.split-visual { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.split-visual > div { min-height: 132px; border: 1px solid var(--line); border-radius: 6px; padding: 15px; display: flex; flex-direction: column; justify-content: space-between; }
-.split-current { border-top: 3px solid var(--brand) !important; }
-.split-history { border-top: 3px solid var(--amber) !important; }
-.split-visual span { font-size: 9px; color: var(--muted); text-transform: uppercase; font-weight: 800; }
-.split-visual strong { font-size: 12px; line-height: 1.45; }
-.split-visual small { font-size: 9px; color: var(--muted); }
+export type SellerSnapshot = {
+  snapshotDate: string;
+  sellerId: number | null;
+  reputationLevelId: string | null;
+  powerSellerStatus: string | null;
+  transactionsPeriod: string | null;
+  transactionsTotal: number | null;
+  transactionsCompleted: number | null;
+  transactionsCanceled: number | null;
+  ratingPositive: number | null;
+  ratingNeutral: number | null;
+  ratingNegative: number | null;
+  salesCompleted: number | null;
+  claimsRate: number | null;
+  claimsValue: number | null;
+  delayedHandlingTimeRate: number | null;
+  delayedHandlingTimeValue: number | null;
+  cancellationsRate: number | null;
+  cancellationsValue: number | null;
+  syncedAt: string | null;
+};
 
-.formula-strip { display: flex; align-items: center; justify-content: center; gap: 13px; min-height: 70px; background: #07090a; color: white; border-radius: 7px; margin-bottom: 16px; padding: 12px; }
-.formula-strip > div { display: flex; align-items: center; gap: 7px; font-size: 10px; color: #bbc4c8; }
-.formula-strip > b { color: #68747a; font-size: 15px; }
-.formula-strip .formula-result { color: var(--brand); font-weight: 800; }
-.empty-data-hero { min-height: 110px; background: #080a0b; color: white; border-radius: 7px; margin-bottom: 16px; padding: 22px; display: flex; align-items: center; gap: 16px; }
-.hero-icon { width: 50px; height: 50px; display: grid; place-items: center; border: 1px solid #18424a; border-radius: 7px; background: #0e2429; color: var(--brand); }
-.empty-data-hero div { flex: 1; }
-.empty-data-hero h2 { margin: 0 0 6px; font-size: 15px; }
-.empty-data-hero p { margin: 0; color: #9aa6ab; font-size: 10px; }
-.empty-data-hero code { color: var(--brand); }
-.funnel { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.funnel > div { min-height: 43px; background: #e5faff; border-left: 3px solid var(--brand); padding: 9px 11px; display: flex; align-items: center; justify-content: space-between; border-radius: 4px; }
-.funnel > div:nth-child(2) { background: #ddf4f8; }
-.funnel > div:nth-child(3) { background: #d5edf1; }
-.funnel span { font-size: 10px; font-weight: 800; }
-.funnel b { font-size: 9px; color: #5a6b71; }
-.funnel-value { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
-.question-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 14px; }
-.question-list li { display: flex; align-items: center; gap: 9px; font-size: 10px; color: #4f5c63; }
-.question-list svg { color: var(--green); flex: 0 0 auto; }
+export type CancellationSummary = {
+  ordersCount: number;
+  paidOrdersCount: number;
+  canceledOrdersCount: number;
+  grossAmount: number;
+  paidAmount: number;
+  canceledAmount: number;
+  canceledOrdersPercent: number | null;
+  canceledAmountPercent: number | null;
+  averageCanceledTicket: number | null;
+};
 
-.logistics-context-banner { margin-bottom: 16px; }
-.logistics-backlog-grid, .logistics-economics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin: 0; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-.logistics-backlog-grid > div, .logistics-economics-grid > div { min-width: 0; min-height: 92px; padding: 13px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); display: flex; flex-direction: column; }
-.logistics-backlog-grid span, .logistics-economics-grid dt { color: var(--muted); font-size: 8px; font-weight: 800; text-transform: uppercase; }
-.logistics-backlog-grid strong, .logistics-economics-grid dd { margin: 9px 0 0; color: var(--ink); font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.logistics-backlog-grid small { margin-top: auto; color: var(--muted); font-size: 8px; line-height: 1.35; }
-.fulfillment-summary { display: flex; flex-direction: column; gap: 15px; }
-.fulfillment-availability { height: 14px; overflow: hidden; border-radius: 4px; background: #edf1f2; }
-.fulfillment-availability span { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #00a9cd, #23c8a1); }
-.fulfillment-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.fulfillment-numbers div { display: flex; flex-direction: column; gap: 5px; }
-.fulfillment-numbers span, .fulfillment-summary > small { color: var(--muted); font-size: 9px; }
-.fulfillment-numbers strong { color: var(--ink); font-size: 17px; font-variant-numeric: tabular-nums; }
-.logistics-policies { display: flex; flex-direction: column; }
-.logistics-policies > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid #edf0f1; }
-.logistics-policies > div:first-child { padding-top: 0; }
-.logistics-policies > div:last-child { border-bottom: 0; padding-bottom: 0; }
-.logistics-policies span { color: var(--ink); font-size: 11px; font-weight: 800; }
-.logistics-policies strong { color: #087b5d; font-size: 12px; font-variant-numeric: tabular-nums; }
-.logistics-policies small { grid-column: 1 / -1; color: var(--muted); font-size: 9px; }
-.logistics-sla-table { min-width: 900px; }
+export type CancellationDailyPoint = CancellationSummary & {
+  date: string;
+};
 
-.seller-header { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
-.seller-avatar { width: 48px; height: 48px; border-radius: 7px; background: #0c2024; color: var(--brand); display: grid; place-items: center; }
-.seller-header > div:nth-child(2) { flex: 1; }
-.seller-header span:not(.status-badge) { color: #008ba7; font-size: 9px; text-transform: uppercase; font-weight: 800; }
-.seller-header h2 { margin: 3px 0; font-size: 18px; }
-.seller-header p { margin: 0; color: var(--muted); font-size: 10px; }
-.seller-context-banner { margin-bottom: 16px; }
-.cancellation-chart { min-height: 210px; display: flex; align-items: end; gap: 8px; overflow-x: auto; padding: 10px 4px 0; border-bottom: 1px solid var(--line); }
-.cancellation-bar-column { width: 36px; min-width: 36px; height: 190px; display: grid; grid-template-rows: 18px 1fr 21px; align-items: end; gap: 5px; text-align: center; }
-.cancellation-bar-column strong { color: var(--ink); font-size: 10px; font-variant-numeric: tabular-nums; }
-.cancellation-bar-column small { color: var(--muted); font-size: 8px; white-space: nowrap; }
-.cancellation-bar-track { height: 100%; width: 100%; display: flex; align-items: end; background: #f4f6f7; border-radius: 4px 4px 0 0; overflow: hidden; }
-.cancellation-bar-track span { width: 100%; min-height: 2px; border-radius: 4px 4px 0 0; background: linear-gradient(to top, #e05252, #ff8d8d); }
-.seller-snapshot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin: 0; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-.seller-snapshot-grid div { min-width: 0; min-height: 70px; padding: 12px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.seller-snapshot-grid dt { color: var(--muted); font-size: 8px; font-weight: 800; text-transform: uppercase; }
-.seller-snapshot-grid dd { margin: 8px 0 0; color: var(--ink); font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.timeline-placeholder { height: 180px; padding: 18px 8px 0; border-bottom: 1px solid var(--line); display: flex; align-items: flex-end; gap: 12px; position: relative; }
-.timeline-placeholder::before, .timeline-placeholder::after { content: ""; position: absolute; left: 8px; right: 8px; border-top: 1px dashed #dfe4e8; }
-.timeline-placeholder::before { top: 35%; }
-.timeline-placeholder::after { top: 65%; }
-.timeline-placeholder span { flex: 1; min-width: 8px; max-width: 38px; background: linear-gradient(to top, #00a9cd, #00d8ff); border-radius: 3px 3px 0 0; z-index: 1; opacity: .72; }
-.sidebar-overlay { display: none; }
+export type LogisticsSlaSummary = {
+  shipmentsCount: number;
+  completedCount: number;
+  onTimeCount: number;
+  lateCount: number;
+  pendingCount: number;
+  overdueCount: number;
+  cancelledCount: number;
+  terminalWithoutCompletionCount: number;
+  onTimePercent: number | null;
+  averageBreachMinutes: number | null;
+  averageBreachDays: number | null;
+};
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+export type LogisticsSlaBreakdown = LogisticsSlaSummary & {
+  eventName: string;
+  logisticType: string | null;
+  targetSource: string;
+  measurementQuality: string;
+};
 
-@media (max-width: 1120px) {
-  .kpi-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .kpi-grid.executive-kpis { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .content-grid.two-one { grid-template-columns: 1fr; }
-  .commerce-flow { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .flow-arrow { display: none; }
-}
+export type LogisticsEconomicsSummary = {
+  ordersCount: number;
+  paidOrdersCount: number;
+  ordersWithReturn: number;
+  ordersWithReturnCost: number;
+  returnedUnits: number;
+  paidGrossRevenue: number;
+  outboundShippingCost: number;
+  returnShippingCost: number;
+  totalShippingCost: number;
+  returnCostOverGrossPercent: number | null;
+  totalShippingCostOverGrossPercent: number | null;
+};
 
-@media (max-width: 860px) {
-  .sidebar { transform: translateX(-100%); transition: transform 180ms ease; }
-  .sidebar.sidebar-open { transform: translateX(0); }
-  .sidebar-overlay { display: block; position: fixed; inset: 0; z-index: 25; border: 0; background: rgba(0,0,0,.55); }
-  .main-stage { margin-left: 0; width: 100%; }
-  .menu-button { display: grid; }
-  .sync-state { display: none; }
-  .content-grid.equal { grid-template-columns: 1fr; }
-  .page-title-row { align-items: flex-start; }
-  .date-chip { display: none; }
-  .date-filter-grid { grid-template-columns: 1fr; }
-  .formula-strip { flex-wrap: wrap; justify-content: flex-start; }
-}
+export type FulfillmentInventorySummary = {
+  totalQuantity: number;
+  availableQuantity: number;
+  notAvailableQuantity: number;
+  availablePercent: number | null;
+  skuCount: number;
+  syncedAt: string | null;
+};
 
-@media (max-width: 600px) {
-  .topbar { padding: 0 14px; }
-  .account-filter { min-width: 0; }
-  .account-mark { display: none; }
-  .account-filter > svg { display: none; }
-  .period-control button { min-width: 36px; }
-  .topbar-right { gap: 6px; }
-  .date-filter-button { width: 36px; padding: 0; justify-content: center; font-size: 0; }
-  .icon-button { display: none; }
-  .date-filter-panel .icon-button { display: grid; }
-  .page-content { padding: 20px 14px; }
-  .date-input-row { grid-template-columns: 1fr; }
-  .date-filter-actions { flex-direction: column-reverse; }
-  .date-filter-actions button { width: 100%; }
-  .page-title-row h1 { font-size: 23px; }
-  .kpi-grid { grid-template-columns: 1fr; }
-  .kpi-grid.executive-kpis { grid-template-columns: 1fr; }
-  .kpi-card { min-height: 138px; }
-  .commerce-flow { grid-template-columns: 1fr; }
-  .trend-panel .panel-heading { flex-direction: column; }
-  .chart-tabs { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .chart-tabs button { width: 100%; }
-  .chart-legend { flex-direction: column; gap: 6px; }
-  .coverage-numbers { grid-template-columns: 1fr; gap: 12px; }
-  .coverage-numbers div { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 10px; }
-  .coverage-numbers div:last-child { border-bottom: 0; }
-  .context-banner { align-items: flex-start; flex-direction: column; }
-  .split-visual { grid-template-columns: 1fr; }
-  .empty-data-hero { align-items: flex-start; flex-wrap: wrap; }
-  .empty-data-hero .status-badge { margin-left: 66px; }
-  .seller-header { align-items: flex-start; flex-wrap: wrap; }
-  .seller-snapshot-grid { grid-template-columns: 1fr; }
-  .logistics-backlog-grid, .logistics-economics-grid { grid-template-columns: 1fr; }
-  .fulfillment-numbers { grid-template-columns: 1fr; gap: 11px; }
-}
+export type LogisticsSlaPolicy = {
+  name: string;
+  logisticType: string | null;
+  startEventCode: string;
+  endEventCode: string;
+  targetMinutes: number;
+};
+
+export type LogisticsData = {
+  dispatch: LogisticsSlaSummary;
+  delivery: LogisticsSlaSummary;
+  comparisonDispatch: LogisticsSlaSummary | null;
+  comparisonDelivery: LogisticsSlaSummary | null;
+  slaBreakdown: LogisticsSlaBreakdown[];
+  economics: LogisticsEconomicsSummary;
+  comparisonEconomics: LogisticsEconomicsSummary | null;
+  fulfillment: FulfillmentInventorySummary;
+  policies: LogisticsSlaPolicy[];
+};
+
+export type DashboardData = {
+  source: "supabase" | "fallback";
+  connected: boolean;
+  message: string | null;
+  accountName: string;
+  periodDays: number;
+  updatedAt: string | null;
+  catalog: {
+    total: number;
+    current: number;
+    retained: number;
+    unknown: number;
+    currentShare: number;
+    retainedShare: number;
+    rows: CatalogRow[];
+  };
+  sales: SalesSummary;
+  comparison: {
+    firstDate: string | null;
+    lastDate: string | null;
+    periodDays: number;
+    sales: SalesSummary | null;
+  };
+  dateSelection: {
+    currentStart: string;
+    currentEnd: string;
+    currentDays: number;
+    comparisonMode: ComparisonMode;
+    comparisonStart: string | null;
+    comparisonEnd: string | null;
+    comparisonDays: number;
+    comparisonLabel: string;
+  };
+  availableDateRange: {
+    firstDate: string | null;
+    lastDate: string | null;
+  };
+  dailyPerformance: {
+    currentFirstDate: string | null;
+    currentLastDate: string | null;
+    previousFirstDate: string | null;
+    previousLastDate: string | null;
+    current: DailyPerformancePoint[];
+    previous: DailyPerformancePoint[];
+  };
+  topProducts: TopProduct[];
+  productComparisons: ProductComparison[];
+  sellerHealth: {
+    profile: SellerProfile;
+    currentSnapshot: SellerSnapshot | null;
+    comparisonSnapshot: SellerSnapshot | null;
+    history: SellerSnapshot[];
+    availableSnapshotDays: number;
+  };
+  cancellations: {
+    current: CancellationSummary;
+    comparison: CancellationSummary | null;
+    dailyCurrent: CancellationDailyPoint[];
+    dailyComparison: CancellationDailyPoint[];
+  };
+  logistics: LogisticsData;
+};
+
+export const FALLBACK_DASHBOARD_DATA: DashboardData = {
+  source: "fallback",
+  connected: false,
+  message: "Aguardando variáveis do Supabase.",
+  accountName: "PCXpress",
+  periodDays: 30,
+  updatedAt: null,
+  catalog: {
+    total: 277,
+    current: 174,
+    retained: 103,
+    unknown: 0,
+    currentShare: 62.8,
+    retainedShare: 37.2,
+    rows: [
+      {
+        source: "Catálogo operacional",
+        status: "Atualizado pela API",
+        count: 174,
+        share: "62,8%",
+        tone: "good",
+      },
+      {
+        source: "Catálogo preservado",
+        status: "Mantido para análise",
+        count: 103,
+        share: "37,2%",
+        tone: "warning",
+      },
+    ],
+  },
+  sales: {
+    visits: null,
+    unitsSold: 1044,
+    ordersCount: 898,
+    grossAmount: 1763179.84,
+    paidGrossAmount: null,
+    avgTicket: 1963.45,
+    conversionRatePercent: null,
+    itemsCount: null,
+    fallbackItemsCount: 103,
+    firstPerformanceDate: null,
+    lastPerformanceDate: "2026-02-25",
+  },
+  comparison: {
+    firstDate: null,
+    lastDate: null,
+    periodDays: 0,
+    sales: null,
+  },
+  dateSelection: {
+    currentStart: "2026-01-27",
+    currentEnd: "2026-02-25",
+    currentDays: 30,
+    comparisonMode: "previousPeriod",
+    comparisonStart: "2025-12-28",
+    comparisonEnd: "2026-01-26",
+    comparisonDays: 30,
+    comparisonLabel: "30 dias anteriores",
+  },
+  availableDateRange: {
+    firstDate: null,
+    lastDate: "2026-02-25",
+  },
+  dailyPerformance: {
+    currentFirstDate: null,
+    currentLastDate: null,
+    previousFirstDate: null,
+    previousLastDate: null,
+    current: [],
+    previous: [],
+  },
+  topProducts: [],
+  productComparisons: [],
+  sellerHealth: {
+    profile: {
+      sellerId: null,
+      nickname: null,
+      reputationRealLevel: null,
+      powerSellerStatus: null,
+      protectionEndDate: null,
+      transactionsPeriod: null,
+      syncedAt: null,
+    },
+    currentSnapshot: null,
+    comparisonSnapshot: null,
+    history: [],
+    availableSnapshotDays: 0,
+  },
+  cancellations: {
+    current: {
+      ordersCount: 0,
+      paidOrdersCount: 0,
+      canceledOrdersCount: 0,
+      grossAmount: 0,
+      paidAmount: 0,
+      canceledAmount: 0,
+      canceledOrdersPercent: null,
+      canceledAmountPercent: null,
+      averageCanceledTicket: null,
+    },
+    comparison: null,
+    dailyCurrent: [],
+    dailyComparison: [],
+  },
+  logistics: {
+    dispatch: {
+      shipmentsCount: 0, completedCount: 0, onTimeCount: 0, lateCount: 0, pendingCount: 0, overdueCount: 0,
+      cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageBreachMinutes: null, averageBreachDays: null,
+    },
+    delivery: {
+      shipmentsCount: 0, completedCount: 0, onTimeCount: 0, lateCount: 0, pendingCount: 0, overdueCount: 0,
+      cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageBreachMinutes: null, averageBreachDays: null,
+    },
+    comparisonDispatch: null,
+    comparisonDelivery: null,
+    slaBreakdown: [],
+    economics: {
+      ordersCount: 0, paidOrdersCount: 0, ordersWithReturn: 0, ordersWithReturnCost: 0, returnedUnits: 0,
+      paidGrossRevenue: 0, outboundShippingCost: 0, returnShippingCost: 0, totalShippingCost: 0,
+      returnCostOverGrossPercent: null, totalShippingCostOverGrossPercent: null,
+    },
+    comparisonEconomics: null,
+    fulfillment: {
+      totalQuantity: 0, availableQuantity: 0, notAvailableQuantity: 0, availablePercent: null, skuCount: 0, syncedAt: null,
+    },
+    policies: [],
+  },
+};
