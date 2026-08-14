@@ -121,6 +121,70 @@ export type CancellationDailyPoint = CancellationSummary & {
   date: string;
 };
 
+export type LogisticsSlaSummary = {
+  shipmentsCount: number;
+  completedCount: number;
+  onTimeCount: number;
+  lateCount: number;
+  pendingCount: number;
+  overdueCount: number;
+  cancelledCount: number;
+  terminalWithoutCompletionCount: number;
+  onTimePercent: number | null;
+  averageBreachMinutes: number | null;
+  averageBreachDays: number | null;
+};
+
+export type LogisticsSlaBreakdown = LogisticsSlaSummary & {
+  eventName: string;
+  logisticType: string | null;
+  targetSource: string;
+  measurementQuality: string;
+};
+
+export type LogisticsEconomicsSummary = {
+  ordersCount: number;
+  paidOrdersCount: number;
+  ordersWithReturn: number;
+  ordersWithReturnCost: number;
+  returnedUnits: number;
+  paidGrossRevenue: number;
+  outboundShippingCost: number;
+  returnShippingCost: number;
+  totalShippingCost: number;
+  returnCostOverGrossPercent: number | null;
+  totalShippingCostOverGrossPercent: number | null;
+};
+
+export type FulfillmentInventorySummary = {
+  totalQuantity: number;
+  availableQuantity: number;
+  notAvailableQuantity: number;
+  availablePercent: number | null;
+  skuCount: number;
+  syncedAt: string | null;
+};
+
+export type LogisticsSlaPolicy = {
+  name: string;
+  logisticType: string | null;
+  startEventCode: string;
+  endEventCode: string;
+  targetMinutes: number;
+};
+
+export type LogisticsData = {
+  dispatch: LogisticsSlaSummary;
+  delivery: LogisticsSlaSummary;
+  comparisonDispatch: LogisticsSlaSummary | null;
+  comparisonDelivery: LogisticsSlaSummary | null;
+  slaBreakdown: LogisticsSlaBreakdown[];
+  economics: LogisticsEconomicsSummary;
+  comparisonEconomics: LogisticsEconomicsSummary | null;
+  fulfillment: FulfillmentInventorySummary;
+  policies: LogisticsSlaPolicy[];
+};
+
 export type DashboardData = {
   source: "supabase" | "fallback";
   connected: boolean;
@@ -181,6 +245,7 @@ export type DashboardData = {
     dailyCurrent: CancellationDailyPoint[];
     dailyComparison: CancellationDailyPoint[];
   };
+  logistics: LogisticsData;
 };
 
 export const FALLBACK_DASHBOARD_DATA: DashboardData = {
@@ -287,5 +352,28 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
     comparison: null,
     dailyCurrent: [],
     dailyComparison: [],
+  },
+  logistics: {
+    dispatch: {
+      shipmentsCount: 0, completedCount: 0, onTimeCount: 0, lateCount: 0, pendingCount: 0, overdueCount: 0,
+      cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageBreachMinutes: null, averageBreachDays: null,
+    },
+    delivery: {
+      shipmentsCount: 0, completedCount: 0, onTimeCount: 0, lateCount: 0, pendingCount: 0, overdueCount: 0,
+      cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageBreachMinutes: null, averageBreachDays: null,
+    },
+    comparisonDispatch: null,
+    comparisonDelivery: null,
+    slaBreakdown: [],
+    economics: {
+      ordersCount: 0, paidOrdersCount: 0, ordersWithReturn: 0, ordersWithReturnCost: 0, returnedUnits: 0,
+      paidGrossRevenue: 0, outboundShippingCost: 0, returnShippingCost: 0, totalShippingCost: 0,
+      returnCostOverGrossPercent: null, totalShippingCostOverGrossPercent: null,
+    },
+    comparisonEconomics: null,
+    fulfillment: {
+      totalQuantity: 0, availableQuantity: 0, notAvailableQuantity: 0, availablePercent: null, skuCount: 0, syncedAt: null,
+    },
+    policies: [],
   },
 };
