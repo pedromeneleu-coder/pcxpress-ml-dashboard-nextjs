@@ -10,6 +10,7 @@ import {
   type LogisticsSlaBreakdown,
   type LogisticsSlaPolicy,
   type LogisticsSlaSummary,
+  type LogisticsStageSummary,
   type ComparisonMode,
   type ProductComparison,
   type ProductPeriodMetrics,
@@ -152,6 +153,19 @@ type LogisticsSlaPolicyRecord = {
   target_minutes: number | string;
   valid_from: string;
   valid_to: string | null;
+};
+
+type LogisticsStageRecord = {
+  sale_date: string;
+  stage_order: number | string;
+  stage_code: string;
+  stage_name: string;
+  start_event_code: string;
+  end_event_code: string;
+  stage_status: string;
+  duration_minutes: number | string | null;
+  target_minutes: number | string | null;
+  above_target: boolean | null;
 };
 
 type SupabaseConfig = {
@@ -686,6 +700,63 @@ function buildLogisticsSlaBreakdown(records: LogisticsSlaRecord[]): LogisticsSla
     .sort((a, b) => b.shipmentsCount - a.shipmentsCount || a.eventName.localeCompare(b.eventName));
 }
 
+function percentile(values: number[], ratio: number): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const position = (sorted.length - 1) * ratio;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
+}
+
+function buildLogisticsStages(records: LogisticsStageRecord[]): LogisticsStageSummary[] {
+  const groups = new Map<string, LogisticsStageRecord[]>();
+
+  for (const record of records) {
+    const group = groups.get(record.stage_code) ?? [];
+    group.push(record);
+    groups.set(record.stage_code, group);
+  }
+
+  return Array.from(groups.values())
+    .map((group) => {
+      const first = group[0];
+      const completedDurations = group
+        .filter((record) => record.stage_status === "completed")
+        .map((record) => toNullableNumber(record.duration_minutes))
+        .filter((value): value is number => value !== null);
+      const targets = new Set(
+        group
+          .map((record) => toNullableNumber(record.target_minutes))
+          .filter((value): value is number => value !== null),
+      );
+      const averageDurationMinutes = completedDurations.length
+        ? completedDurations.reduce((sum, value) => sum + value, 0) / completedDurations.length
+        : null;
+
+      return {
+        stageOrder: toNumber(first.stage_order),
+        stageCode: first.stage_code,
+        stageName: first.stage_name,
+        startEventCode: first.start_event_code,
+        endEventCode: first.end_event_code,
+        startedCount: group.length,
+        completedCount: completedDurations.length,
+        inProgressCount: group.filter((record) => record.stage_status === "in_progress").length,
+        terminalWithoutEventCount: group.filter((record) => record.stage_status === "terminal_without_event").length,
+        invalidSequenceCount: group.filter((record) => record.stage_status === "invalid_sequence").length,
+        averageDurationMinutes,
+        medianDurationMinutes: percentile(completedDurations, 0.5),
+        p90DurationMinutes: percentile(completedDurations, 0.9),
+        coveragePercent: group.length ? (completedDurations.length / group.length) * 100 : null,
+        targetMinutes: targets.size === 1 ? Array.from(targets)[0] : null,
+        aboveTargetCount: group.filter((record) => record.above_target === true).length,
+      };
+    })
+    .sort((a, b) => a.stageOrder - b.stageOrder);
+}
+
 function buildLogisticsEconomics(records: LogisticsEconomicsRecord[]): LogisticsEconomicsSummary {
   const totals = records.reduce(
     (acc, record) => {
@@ -919,6 +990,7 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       logisticsEconomicsRecords,
       fulfillmentRecords,
       logisticsPolicyRecords,
+      logisticsStageRecords,
     ] = await Promise.all([
       fetchAll<CatalogRecord>(
         config,
@@ -1013,6 +1085,16 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           order: "policy_name.asc",
         }),
       ),
+      optionalFetchAll<LogisticsStageRecord>(
+        config,
+        appendQuery("dashboard_logistics_stage_times", {
+          select:
+            "sale_date,stage_order,stage_code,stage_name,start_event_code,end_event_code,stage_status,duration_minutes,target_minutes,above_target",
+          account_id: accountFilter,
+          ...logisticsPeriodFilter,
+          order: "sale_date.asc,stage_order.asc",
+        }),
+      ),
     ]);
 
     const timestamps = catalogRecords
@@ -1055,9 +1137,12 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
     const previousLogisticsEconomicsRecords = logisticsEconomicsRecords.filter((record) =>
       inRange(record.sale_date, dateSelection.comparisonStart, dateSelection.comparisonEnd),
     );
-    const officialSla = (records: LogisticsSlaRecord[], eventName: string, targetSource: string) =>
+    const currentLogisticsStageRecords = logisticsStageRecords.filter((record) =>
+      inRange(record.sale_date, dateSelection.currentStart, dateSelection.currentEnd),
+    );
+    const officialSla = (records: LogisticsSlaRecord[], eventNames: string[], targetSource: string) =>
       records.filter((record) =>
-        record.event_name === eventName &&
+        eventNames.includes(record.event_name) &&
         record.target_source === targetSource &&
         record.measurement_quality === "prospective",
       );
@@ -1117,19 +1202,19 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       },
       logistics: {
         dispatch: buildLogisticsSlaSummary(
-          officialSla(currentLogisticsSlaRecords, "Despacho ao transportador", "meli_sla"),
+          officialSla(currentLogisticsSlaRecords, ["Despacho ao Mercado Livre", "Despacho ao transportador"], "meli_sla"),
         ),
         delivery: buildLogisticsSlaSummary(
-          officialSla(currentLogisticsSlaRecords, "Entrega ao comprador", "meli_lead_time"),
+          officialSla(currentLogisticsSlaRecords, ["Entrega ao comprador"], "meli_lead_time"),
         ),
         comparisonDispatch: previousLogisticsSlaRecords.length
           ? buildLogisticsSlaSummary(
-            officialSla(previousLogisticsSlaRecords, "Despacho ao transportador", "meli_sla"),
+            officialSla(previousLogisticsSlaRecords, ["Despacho ao Mercado Livre", "Despacho ao transportador"], "meli_sla"),
           )
           : null,
         comparisonDelivery: previousLogisticsSlaRecords.length
           ? buildLogisticsSlaSummary(
-            officialSla(previousLogisticsSlaRecords, "Entrega ao comprador", "meli_lead_time"),
+            officialSla(previousLogisticsSlaRecords, ["Entrega ao comprador"], "meli_lead_time"),
           )
           : null,
         slaBreakdown: buildLogisticsSlaBreakdown(currentLogisticsSlaRecords),
@@ -1141,6 +1226,7 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
         policies: buildLogisticsPolicies(
           logisticsPolicyRecords.filter((record) => !record.valid_to || record.valid_to >= dateSelection.currentStart),
         ),
+        stages: buildLogisticsStages(currentLogisticsStageRecords),
       },
     };
   } catch (error) {
