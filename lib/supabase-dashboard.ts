@@ -490,6 +490,9 @@ function buildSales(records: AccountSummaryRecord[]): DashboardData["sales"] {
 
   const dates = records.map((record) => record.performance_date).sort();
   const hasVisits = records.some((record) => toNullableNumber(record.visits) !== null);
+  // Sem essa distinção, "a view não traz valor pago" viraria R$ 0,00 na tela,
+  // que se lê como queda total de vendas em vez de ausência de dado.
+  const hasPaidGross = records.some((record) => toNullableNumber(record.paid_gross_amount) !== null);
   const conversionRatePercent = totals.visits > 0 ? (totals.ordersCount / totals.visits) * 100 : null;
 
   return {
@@ -497,7 +500,7 @@ function buildSales(records: AccountSummaryRecord[]): DashboardData["sales"] {
     unitsSold: totals.unitsSold,
     ordersCount: totals.ordersCount,
     grossAmount: totals.grossAmount,
-    paidGrossAmount: totals.paidGrossAmount,
+    paidGrossAmount: hasPaidGross ? totals.paidGrossAmount : null,
     avgTicket: totals.ordersCount > 0 ? totals.grossAmount / totals.ordersCount : null,
     conversionRatePercent,
     itemsCount: totals.itemsCount,

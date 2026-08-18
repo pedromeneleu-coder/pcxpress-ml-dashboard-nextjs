@@ -28,6 +28,7 @@
     TrendingUp,
     Truck,
     Users,
+    Wallet,
     X,
     Zap,
   } from "lucide-react";
@@ -142,6 +143,29 @@
   
   function formatTablePercent(value: number | null) {
     return value === null ? "—" : formatPercent(value);
+  }
+  
+  /** Parcela do valor bruto que virou pagamento confirmado. */
+  function paidGrossSharePercent(sales: DashboardData["sales"]) {
+    if (sales.paidGrossAmount === null || sales.grossAmount <= 0) {
+      return null;
+    }
+  
+    return (sales.paidGrossAmount / sales.grossAmount) * 100;
+  }
+  
+  /**
+   * O valor bruto conta pedido criado, inclusive o que foi cancelado depois.
+   * Este detalhe mostra, no mesmo cartão, quanto daquele total foi pago.
+   */
+  function paidGrossDetail(sales: DashboardData["sales"], fallback: string) {
+    if (sales.paidGrossAmount === null) {
+      return fallback;
+    }
+  
+    const share = paidGrossSharePercent(sales);
+  
+    return `${formatCurrency(sales.paidGrossAmount)} pagos${share === null ? "" : ` · ${formatPercent(share)} do bruto`}`;
   }
   
   function formatLogisticsDuration(minutes: number | null, days: number | null) {
@@ -897,6 +921,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
   
   function OverviewView({ data }: { data: DashboardData }) {
     const accountConversion = data.sales.conversionRatePercent;
+    const paidShare = paidGrossSharePercent(data.sales);
     const unitsPerOrder = data.sales.ordersCount > 0 ? data.sales.unitsSold / data.sales.ordersCount : null;
     const previousUnitsPerOrder = data.comparison.sales && data.comparison.sales.ordersCount > 0
       ? data.comparison.sales.unitsSold / data.comparison.sales.ordersCount
@@ -927,7 +952,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Valor bruto"
             value={formatCurrency(data.sales.grossAmount)}
-            detail={`Resultado acumulado em ${data.periodDays} dias`}
+            detail={paidGrossDetail(data.sales, `Resultado acumulado em ${data.periodDays} dias`)}
             icon={CircleDollarSign}
             tone="brand"
             featured
@@ -977,10 +1002,10 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
         <section className="panel commerce-flow-panel">
           <PanelTitle
             title="Resumo comercial"
-            subtitle="Visitas, conversão, pedidos e valor bruto no período selecionado."
+            subtitle="Visitas, conversão, pedidos, valor vendido e valor recebido no período selecionado."
             action={<span className="tiny-label">{data.periodDays} dias</span>}
           />
-          <div className="commerce-flow" aria-label="Visitas, conversão, pedidos e valor bruto">
+          <div className="commerce-flow" aria-label="Visitas, conversão, pedidos, valor vendido e valor recebido">
             <div className="commerce-flow-step">
               <span className="flow-icon"><Eye size={17} /></span>
               <small>01 · Tráfego</small>
@@ -1002,11 +1027,18 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
               <p>Pedidos confirmados</p>
             </div>
             <span className="flow-arrow" aria-hidden="true">→</span>
-            <div className="commerce-flow-step flow-result">
+            <div className="commerce-flow-step">
               <span className="flow-icon"><CircleDollarSign size={17} /></span>
-              <small>04 · Resultado</small>
+              <small>04 · Vendido</small>
               <strong>{formatCurrency(data.sales.grossAmount)}</strong>
-              <p>Valor bruto vendido</p>
+              <p>Valor bruto dos pedidos criados</p>
+            </div>
+            <span className="flow-arrow" aria-hidden="true">→</span>
+            <div className="commerce-flow-step flow-result">
+              <span className="flow-icon"><Wallet size={17} /></span>
+              <small>05 · Recebido</small>
+              <strong>{data.sales.paidGrossAmount === null ? "Sem dados" : formatCurrency(data.sales.paidGrossAmount)}</strong>
+              <p>{paidShare === null ? "Sem dado de pagamento no período" : `${formatPercent(paidShare)} do valor vendido`}</p>
             </div>
           </div>
         </section>
@@ -1118,7 +1150,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Valor bruto"
             value={formatCurrency(data.sales.grossAmount)}
-            detail="Período selecionado"
+            detail={paidGrossDetail(data.sales, "Período selecionado")}
             icon={CircleDollarSign}
             tone="brand"
             comparison={{

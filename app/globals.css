@@ -200,7 +200,7 @@ button { letter-spacing: 0; }
 .chart-tooltip-change.neutral { fill: #b7c0c4; }
 .chart-empty-state { min-height: 180px; border: 1px dashed #cfd6da; border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 10px; text-align: center; padding: 20px; }
 .commerce-flow-panel { margin-bottom: 16px; }
-.commerce-flow { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); align-items: stretch; gap: 10px; }
+.commerce-flow { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); align-items: stretch; gap: 10px; }
 .commerce-flow-step { position: relative; min-height: 116px; padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: #f9fbfb; }
 .commerce-flow-step .flow-icon { position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 5px; color: #087f99; background: #e4faff; }
 .commerce-flow-step small { display: block; color: #718087; font-size: 8px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
