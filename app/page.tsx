@@ -28,6 +28,7 @@
     TrendingUp,
     Truck,
     Users,
+    Wallet,
     X,
     Zap,
   } from "lucide-react";
@@ -38,6 +39,11 @@
     type DailyPerformancePoint,
     type DashboardData,
   } from "./dashboard-types";
+  import {
+    evaluateTrend,
+    type MetricDirection,
+    type TrendSignal,
+  } from "./metric-signals";
   
   type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "logistics" | "seller";
   
@@ -137,6 +143,29 @@
   
   function formatTablePercent(value: number | null) {
     return value === null ? "—" : formatPercent(value);
+  }
+  
+  /** Parcela do valor bruto que virou pagamento confirmado. */
+  function paidGrossSharePercent(sales: DashboardData["sales"]) {
+    if (sales.paidGrossAmount === null || sales.grossAmount <= 0) {
+      return null;
+    }
+  
+    return (sales.paidGrossAmount / sales.grossAmount) * 100;
+  }
+  
+  /**
+   * O valor bruto conta pedido criado, inclusive o que foi cancelado depois.
+   * Este detalhe mostra, no mesmo cartão, quanto daquele total foi pago.
+   */
+  function paidGrossDetail(sales: DashboardData["sales"], fallback: string) {
+    if (sales.paidGrossAmount === null) {
+      return fallback;
+    }
+  
+    const share = paidGrossSharePercent(sales);
+  
+    return `${formatCurrency(sales.paidGrossAmount)} pagos${share === null ? "" : ` · ${formatPercent(share)} do bruto`}`;
   }
   
   function formatLogisticsDuration(minutes: number | null, days: number | null) {
@@ -658,42 +687,48 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
     current: number | null;
     previous: number | null;
     periodDays: number;
+    /** Em cancelamentos, atrasos e custos, cair é o resultado bom. */
+    direction?: MetricDirection;
   };
   
-  function ComparisonIndicator({ current, previous, periodDays, compact = false }: ComparisonMetric & { compact?: boolean }) {
-    if (current === null || previous === null) {
-      return (
-        <span className={`comparison-indicator comparison-neutral${compact ? " comparison-compact" : ""}`}>
-          <Minus size={13} /> Sem base anterior
-        </span>
-      );
+  const comparisonArrowIcon = {
+    up: ArrowUpRight,
+    down: ArrowDownRight,
+    flat: Minus,
+  } as const;
+  
+  /** A seta vem do fato (subiu ou caiu); este texto apenas o descreve. */
+  function comparisonText(signal: TrendSignal) {
+    switch (signal.label) {
+      case "Sem base anterior":
+        return "Sem base anterior";
+      case "Novo":
+        return "Novo no período";
+      case "Zerado":
+        return "Zerado no período";
+      case "Sem variação":
+        return "Sem variação em relação ao período anterior";
+      default:
+        return `${signal.label} em relação ao período anterior`;
     }
+  }
   
-    if (previous === 0) {
-      const hasGrowth = current > 0;
-  
-      return (
-        <span className={`comparison-indicator comparison-${hasGrowth ? "up" : "neutral"}${compact ? " comparison-compact" : ""}`}>
-          {hasGrowth ? <ArrowUpRight size={13} /> : <Minus size={13} />}
-          {hasGrowth ? "Novo no período" : "Sem variação em relação ao período anterior"}
-        </span>
-      );
-    }
-  
-    const changePercent = ((current - previous) / Math.abs(previous)) * 100;
-    const direction = changePercent > 0 ? "up" : changePercent < 0 ? "down" : "neutral";
-    const Icon = direction === "up" ? ArrowUpRight : direction === "down" ? ArrowDownRight : Minus;
-    const formattedChange = Math.abs(changePercent).toLocaleString("pt-BR", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    });
+  function ComparisonIndicator({
+    current,
+    previous,
+    periodDays,
+    direction = "higherIsBetter",
+    compact = false,
+  }: ComparisonMetric & { compact?: boolean }) {
+    const signal = evaluateTrend(current, previous, direction);
+    const Icon = comparisonArrowIcon[signal.arrow];
   
     return (
       <span
-        className={`comparison-indicator comparison-${direction}${compact ? " comparison-compact" : ""}`}
+        className={`comparison-indicator comparison-${signal.tone}${compact ? " comparison-compact" : ""}`}
         title={`Período principal: ${periodDays} dias; comparação conforme o filtro global`}
       >
-        <Icon size={13} /> {formattedChange}% em relação ao período anterior
+        <Icon size={13} /> {comparisonText(signal)}
       </span>
     );
   }
@@ -886,6 +921,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
   
   function OverviewView({ data }: { data: DashboardData }) {
     const accountConversion = data.sales.conversionRatePercent;
+    const paidShare = paidGrossSharePercent(data.sales);
     const unitsPerOrder = data.sales.ordersCount > 0 ? data.sales.unitsSold / data.sales.ordersCount : null;
     const previousUnitsPerOrder = data.comparison.sales && data.comparison.sales.ordersCount > 0
       ? data.comparison.sales.unitsSold / data.comparison.sales.ordersCount
@@ -916,7 +952,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Valor bruto"
             value={formatCurrency(data.sales.grossAmount)}
-            detail={`Resultado acumulado em ${data.periodDays} dias`}
+            detail={paidGrossDetail(data.sales, `Resultado acumulado em ${data.periodDays} dias`)}
             icon={CircleDollarSign}
             tone="brand"
             featured
@@ -966,10 +1002,10 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
         <section className="panel commerce-flow-panel">
           <PanelTitle
             title="Resumo comercial"
-            subtitle="Visitas, conversão, pedidos e valor bruto no período selecionado."
+            subtitle="Visitas, conversão, pedidos, valor vendido e valor recebido no período selecionado."
             action={<span className="tiny-label">{data.periodDays} dias</span>}
           />
-          <div className="commerce-flow" aria-label="Visitas, conversão, pedidos e valor bruto">
+          <div className="commerce-flow" aria-label="Visitas, conversão, pedidos, valor vendido e valor recebido">
             <div className="commerce-flow-step">
               <span className="flow-icon"><Eye size={17} /></span>
               <small>01 · Tráfego</small>
@@ -991,11 +1027,18 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
               <p>Pedidos confirmados</p>
             </div>
             <span className="flow-arrow" aria-hidden="true">→</span>
-            <div className="commerce-flow-step flow-result">
+            <div className="commerce-flow-step">
               <span className="flow-icon"><CircleDollarSign size={17} /></span>
-              <small>04 · Resultado</small>
+              <small>04 · Vendido</small>
               <strong>{formatCurrency(data.sales.grossAmount)}</strong>
-              <p>Valor bruto vendido</p>
+              <p>Valor bruto dos pedidos criados</p>
+            </div>
+            <span className="flow-arrow" aria-hidden="true">→</span>
+            <div className="commerce-flow-step flow-result">
+              <span className="flow-icon"><Wallet size={17} /></span>
+              <small>05 · Recebido</small>
+              <strong>{data.sales.paidGrossAmount === null ? "Sem dados" : formatCurrency(data.sales.paidGrossAmount)}</strong>
+              <p>{paidShare === null ? "Sem dado de pagamento no período" : `${formatPercent(paidShare)} do valor vendido`}</p>
             </div>
           </div>
         </section>
@@ -1107,7 +1150,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Valor bruto"
             value={formatCurrency(data.sales.grossAmount)}
-            detail="Período selecionado"
+            detail={paidGrossDetail(data.sales, "Período selecionado")}
             icon={CircleDollarSign}
             tone="brand"
             comparison={{
@@ -1555,7 +1598,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
             detail={`${formatNumber(dispatch.pendingCount)} dentro do prazo · ${formatNumber(dispatch.cancelledCount)} cancelados`}
             icon={AlertTriangle}
             tone={dispatch.overdueCount ? "warning" : "good"}
-            comparison={{ current: dispatch.overdueCount, previous: comparisonDispatch?.overdueCount ?? null, periodDays: data.periodDays }}
+            comparison={{ current: dispatch.overdueCount, previous: comparisonDispatch?.overdueCount ?? null, periodDays: data.periodDays, direction: "lowerIsBetter" }}
           />
           <KpiCard
             label="Custo de devoluções / valor pago"
@@ -1563,7 +1606,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
             detail={hasEconomicsData ? `${formatCurrency(economics.returnShippingCost)} vinculados aos pedidos do período de origem` : "Sem custos de devolução vinculados ao período"}
             icon={RotateCcw}
             tone="warning"
-            comparison={{ current: economics.returnCostOverGrossPercent, previous: comparisonEconomics?.returnCostOverGrossPercent ?? null, periodDays: data.periodDays }}
+            comparison={{ current: economics.returnCostOverGrossPercent, previous: comparisonEconomics?.returnCostOverGrossPercent ?? null, periodDays: data.periodDays, direction: "lowerIsBetter" }}
           />
         </section>
 
