@@ -38,6 +38,11 @@
     type DailyPerformancePoint,
     type DashboardData,
   } from "./dashboard-types";
+  import {
+    evaluateTrend,
+    type MetricDirection,
+    type TrendSignal,
+  } from "./metric-signals";
   
   type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "logistics" | "seller";
   
@@ -658,42 +663,48 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
     current: number | null;
     previous: number | null;
     periodDays: number;
+    /** Em cancelamentos, atrasos e custos, cair é o resultado bom. */
+    direction?: MetricDirection;
   };
   
-  function ComparisonIndicator({ current, previous, periodDays, compact = false }: ComparisonMetric & { compact?: boolean }) {
-    if (current === null || previous === null) {
-      return (
-        <span className={`comparison-indicator comparison-neutral${compact ? " comparison-compact" : ""}`}>
-          <Minus size={13} /> Sem base anterior
-        </span>
-      );
+  const comparisonArrowIcon = {
+    up: ArrowUpRight,
+    down: ArrowDownRight,
+    flat: Minus,
+  } as const;
+  
+  /** A seta vem do fato (subiu ou caiu); este texto apenas o descreve. */
+  function comparisonText(signal: TrendSignal) {
+    switch (signal.label) {
+      case "Sem base anterior":
+        return "Sem base anterior";
+      case "Novo":
+        return "Novo no período";
+      case "Zerado":
+        return "Zerado no período";
+      case "Sem variação":
+        return "Sem variação em relação ao período anterior";
+      default:
+        return `${signal.label} em relação ao período anterior`;
     }
+  }
   
-    if (previous === 0) {
-      const hasGrowth = current > 0;
-  
-      return (
-        <span className={`comparison-indicator comparison-${hasGrowth ? "up" : "neutral"}${compact ? " comparison-compact" : ""}`}>
-          {hasGrowth ? <ArrowUpRight size={13} /> : <Minus size={13} />}
-          {hasGrowth ? "Novo no período" : "Sem variação em relação ao período anterior"}
-        </span>
-      );
-    }
-  
-    const changePercent = ((current - previous) / Math.abs(previous)) * 100;
-    const direction = changePercent > 0 ? "up" : changePercent < 0 ? "down" : "neutral";
-    const Icon = direction === "up" ? ArrowUpRight : direction === "down" ? ArrowDownRight : Minus;
-    const formattedChange = Math.abs(changePercent).toLocaleString("pt-BR", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    });
+  function ComparisonIndicator({
+    current,
+    previous,
+    periodDays,
+    direction = "higherIsBetter",
+    compact = false,
+  }: ComparisonMetric & { compact?: boolean }) {
+    const signal = evaluateTrend(current, previous, direction);
+    const Icon = comparisonArrowIcon[signal.arrow];
   
     return (
       <span
-        className={`comparison-indicator comparison-${direction}${compact ? " comparison-compact" : ""}`}
+        className={`comparison-indicator comparison-${signal.tone}${compact ? " comparison-compact" : ""}`}
         title={`Período principal: ${periodDays} dias; comparação conforme o filtro global`}
       >
-        <Icon size={13} /> {formattedChange}% em relação ao período anterior
+        <Icon size={13} /> {comparisonText(signal)}
       </span>
     );
   }
@@ -1555,7 +1566,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
             detail={`${formatNumber(dispatch.pendingCount)} dentro do prazo · ${formatNumber(dispatch.cancelledCount)} cancelados`}
             icon={AlertTriangle}
             tone={dispatch.overdueCount ? "warning" : "good"}
-            comparison={{ current: dispatch.overdueCount, previous: comparisonDispatch?.overdueCount ?? null, periodDays: data.periodDays }}
+            comparison={{ current: dispatch.overdueCount, previous: comparisonDispatch?.overdueCount ?? null, periodDays: data.periodDays, direction: "lowerIsBetter" }}
           />
           <KpiCard
             label="Custo de devoluções / valor pago"
@@ -1563,7 +1574,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
             detail={hasEconomicsData ? `${formatCurrency(economics.returnShippingCost)} vinculados aos pedidos do período de origem` : "Sem custos de devolução vinculados ao período"}
             icon={RotateCcw}
             tone="warning"
-            comparison={{ current: economics.returnCostOverGrossPercent, previous: comparisonEconomics?.returnCostOverGrossPercent ?? null, periodDays: data.periodDays }}
+            comparison={{ current: economics.returnCostOverGrossPercent, previous: comparisonEconomics?.returnCostOverGrossPercent ?? null, periodDays: data.periodDays, direction: "lowerIsBetter" }}
           />
         </section>
 

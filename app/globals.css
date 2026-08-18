@@ -145,8 +145,11 @@ button { letter-spacing: 0; }
 .kpi-card > strong { display: block; margin-top: 10px; font-size: 24px; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .kpi-card > small { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .comparison-indicator { width: fit-content; min-height: 20px; margin-top: 8px; padding: 3px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.comparison-up { color: #087b5d; background: #e9f8f3; }
-.comparison-down { color: #ad3434; background: #fcecec; }
+/* Cor = julgamento (ver app/metric-signals.ts). A seta indica o fato: subiu ou caiu.
+   Por isso um cancelamento que sobe tem seta para cima e fundo vermelho. */
+.comparison-good { color: #087b5d; background: #e9f8f3; }
+.comparison-attention { color: #8a5a06; background: #fdf3e2; }
+.comparison-bad { color: #ad3434; background: #fcecec; }
 .comparison-neutral { color: #657078; background: #eef1f2; }
 .comparison-compact { min-height: auto; margin-top: 0; padding: 0; background: transparent; font-size: 8px; }
 .kpi-featured { background: #07090a; border-color: #07090a; color: white; }
