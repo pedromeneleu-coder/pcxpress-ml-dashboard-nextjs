@@ -174,6 +174,25 @@ export type LogisticsSlaPolicy = {
   targetMinutes: number;
 };
 
+export type LogisticsStageSummary = {
+  stageOrder: number;
+  stageCode: string;
+  stageName: string;
+  startEventCode: string;
+  endEventCode: string;
+  startedCount: number;
+  completedCount: number;
+  inProgressCount: number;
+  terminalWithoutEventCount: number;
+  invalidSequenceCount: number;
+  averageDurationMinutes: number | null;
+  medianDurationMinutes: number | null;
+  p90DurationMinutes: number | null;
+  coveragePercent: number | null;
+  targetMinutes: number | null;
+  aboveTargetCount: number;
+};
+
 export type LogisticsData = {
   dispatch: LogisticsSlaSummary;
   delivery: LogisticsSlaSummary;
@@ -184,6 +203,7 @@ export type LogisticsData = {
   comparisonEconomics: LogisticsEconomicsSummary | null;
   fulfillment: FulfillmentInventorySummary;
   policies: LogisticsSlaPolicy[];
+  stages: LogisticsStageSummary[];
 };
 
 export type DashboardData = {
@@ -376,5 +396,6 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
       totalQuantity: 0, availableQuantity: 0, notAvailableQuantity: 0, availablePercent: null, skuCount: 0, syncedAt: null,
     },
     policies: [],
+    stages: [],
   },
 };
