@@ -45,16 +45,16 @@
     { id: "overview", label: "Visão geral", icon: LayoutDashboard },
     { id: "sales", label: "Vendas", icon: CircleDollarSign },
     { id: "products", label: "Produtos e anúncios", icon: ShoppingBag },
-    { id: "performance", label: "Performance", icon: BarChart3 },
+    { id: "performance", label: "Desempenho", icon: BarChart3 },
     { id: "traffic", label: "Tráfego e conversão", icon: Eye },
     { id: "logistics", label: "Logística", icon: Truck },
-    { id: "seller", label: "Saúde do seller", icon: ShieldCheck },
+    { id: "seller", label: "Saúde da conta", icon: ShieldCheck },
   ] as const;
   
   const viewMeta: Record<ViewId, { title: string; description: string }> = {
     overview: {
       title: "Visão geral",
-      description: "Leitura executiva da operação Mercado Livre, com catálogo consolidado e dados auditáveis.",
+      description: "Vendas, tráfego, anúncios e operação no período selecionado.",
     },
     sales: {
       title: "Vendas",
@@ -62,11 +62,11 @@
     },
     products: {
       title: "Produtos e anúncios",
-      description: "Catálogo único para decisões comerciais, preservando a origem apenas como auditoria técnica.",
+      description: "Vendas, visitas, estoque e situação atual de cada anúncio.",
     },
     performance: {
-      title: "Performance por anúncio",
-      description: "Cruzamento diário de vendas, visitas, conversão e disponibilidade por item.",
+      title: "Desempenho por anúncio",
+      description: "Vendas, visitas, conversão e disponibilidade por anúncio e por dia.",
     },
     traffic: {
       title: "Tráfego e conversão",
@@ -74,11 +74,11 @@
     },
     logistics: {
       title: "Logística",
-      description: "SLA, pendências, devoluções, custo reverso e disponibilidade do Full.",
+      description: "Prazos, etapas da entrega, envios pendentes, devoluções e estoque no Full.",
     },
     seller: {
-      title: "Saúde do seller",
-      description: "Reputação e sinais operacionais da conta PCXpress.",
+      title: "Saúde da conta",
+      description: "Reputação, reclamações, atrasos e cancelamentos da conta PCXpress.",
     },
   };
   
@@ -126,7 +126,7 @@
   
   function formatPercent(value: number | null) {
     if (value === null) {
-      return "Após conexão";
+      return "Sem dados";
     }
   
     return `${value.toLocaleString("pt-BR", {
@@ -141,19 +141,23 @@
   
   function formatLogisticsDuration(minutes: number | null, days: number | null) {
     if (days !== null) {
-      return `${days.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} dia(s)`;
+      const formattedDays = days.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+      return `${formattedDays} ${days === 1 ? "dia" : "dias"}`;
     }
   
     if (minutes === null) return "—";
     if (minutes < 60) return `${Math.round(minutes)} min`;
-    if (minutes >= 1440) return `${(minutes / 1440).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} dia(s)`;
+    if (minutes >= 1440) {
+      const totalDays = minutes / 1440;
+      return `${totalDays.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} ${totalDays === 1 ? "dia" : "dias"}`;
+    }
     return `${(minutes / 60).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h`;
   }
   
   function logisticsSourceLabel(source: string) {
     const labels: Record<string, string> = {
-      meli_sla: "SLA Mercado Livre",
-      meli_lead_time: "Promessa Mercado Livre",
+      meli_sla: "Prazo de despacho do Mercado Livre",
+      meli_lead_time: "Prazo de entrega do Mercado Livre",
       internal_policy: "Meta interna",
     };
     return labels[source] ?? source;
@@ -161,15 +165,58 @@
   
   function logisticsQualityLabel(value: string) {
     const labels: Record<string, string> = {
-      prospective: "Oficial",
-      retrospective: "Histórico",
+      prospective: "Acompanhado desde o início",
+      retrospective: "Histórico recuperado",
       pending: "Em aberto",
       internal_policy: "Meta interna",
     };
     return labels[value] ?? value;
   }
+
+  const logisticsStageLabels: Record<string, string> = {
+    preparation: "Preparação do pedido",
+    awaiting_handoff: "Espera pela coleta ou postagem",
+    first_mile: "Transporte até o centro de distribuição",
+    hub_processing: "Processamento no centro de distribuição",
+    main_transport: "Transporte até a região de entrega",
+    last_mile: "Saída para entrega até o comprador",
+  };
+
+  const logisticsEventLabels: Record<string, string> = {
+    handling_started: "Preparação iniciada",
+    ready_to_ship: "Pronto para envio",
+    label_ready: "Etiqueta pronta",
+    seller_handoff: "Entregue à transportadora",
+    in_hub: "Recebido no centro de distribuição",
+    shipped: "Em transporte",
+    out_for_delivery: "Saiu para entrega",
+    delivered: "Entregue ao comprador",
+    not_delivered: "Entrega não realizada",
+    cancelled: "Envio cancelado",
+  };
+
+  function logisticsStageLabel(stageCode: string, fallback: string) {
+    return logisticsStageLabels[stageCode] ?? fallback;
+  }
+
+  function logisticsEventLabel(eventCode: string) {
+    return logisticsEventLabels[eventCode] ?? eventCode.replaceAll("_", " ");
+  }
+
+  function logisticsTypeLabel(value: string | null) {
+    if (!value) return "Não informada";
+    const labels: Record<string, string> = {
+      fulfillment: "Full",
+      cross_docking: "Cross docking",
+      drop_off: "Postagem",
+      self_service: "Envios Flex",
+    };
+    return labels[value] ?? value.replaceAll("_", " ");
+  }
   
 type LogisticsEventAverage = {
+  stageCode: string | null;
+  stageOrder: number | null;
   eventName: string;
   completedCount: number;
   onTimePercent: number | null;
@@ -189,6 +236,8 @@ type LogisticsEventAverage = {
       if (!row.completedCount || row.averageElapsedMinutes === null) continue;
   
       const current = events.get(row.eventName) ?? {
+        stageCode: null,
+        stageOrder: null,
         eventName: row.eventName,
         completedCount: 0,
         onTimePercent: null,
@@ -223,7 +272,9 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
   return stages
     .filter((stage) => stage.completedCount > 0 && stage.averageDurationMinutes !== null)
     .map((stage) => ({
-      eventName: stage.stageName,
+      stageCode: stage.stageCode,
+      stageOrder: stage.stageOrder,
+      eventName: logisticsStageLabel(stage.stageCode, stage.stageName),
       completedCount: stage.completedCount,
       onTimePercent: stage.targetMinutes === null
         ? null
@@ -241,7 +292,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
   
   function formatDate(value: string | null) {
     if (!value) {
-      return "Após conexão";
+      return "Sem data";
     }
   
     return new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
@@ -256,7 +307,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
   }
   
   function reputationLabel(value: string | null) {
-    if (!value) return "Sem snapshot";
+    if (!value) return "Sem registro";
   
     const labels: Record<string, string> = {
       "5_green": "5 verde",
@@ -268,6 +319,25 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
   
     return labels[value] ?? value.replaceAll("_", " ");
   }
+
+  function accountLevelLabel(value: string | null) {
+    if (!value) return "Conta ativa";
+    const labels: Record<string, string> = {
+      platinum: "MercadoLíder Platinum",
+      gold: "MercadoLíder Gold",
+      silver: "MercadoLíder",
+    };
+    return labels[value.toLowerCase()] ?? value.replaceAll("_", " ");
+  }
+
+  function transactionsPeriodLabel(value: string) {
+    const labels: Record<string, string> = {
+      historic: "todo o histórico disponível",
+      last_60_days: "últimos 60 dias",
+      last_365_days: "últimos 365 dias",
+    };
+    return labels[value.toLowerCase()] ?? value.replaceAll("_", " ");
+  }
   
   function snapshotDeltaText(
     current: number | null,
@@ -275,18 +345,18 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
     previousDate: string | null,
   ) {
     if (current === null || previous === null || !previousDate) {
-      return "Sem snapshot de comparação";
+      return "Sem registro para comparação";
     }
   
     const difference = (current - previous) * 100;
     if (difference === 0) {
-      return `Sem alteração vs. ${formatDate(previousDate)}`;
+      return `Sem alteração desde ${formatDate(previousDate)}`;
     }
   
     return `${difference > 0 ? "+" : "−"}${Math.abs(difference).toLocaleString("pt-BR", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    })} p.p. vs. ${formatDate(previousDate)}`;
+    })} p.p. desde ${formatDate(previousDate)}`;
   }
   
   function comparisonRangeText(data: DashboardData) {
@@ -433,7 +503,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
     return (
       <section className="panel trend-panel">
         <PanelTitle
-          title="Evolução diária: atual vs. anterior"
+          title="Evolução diária: período atual e anterior"
           subtitle={data.comparison.periodDays
             ? "As linhas alinham os períodos pelo primeiro dia de cada intervalo selecionado."
             : "A linha mostra somente o período principal selecionado."}
@@ -564,10 +634,10 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                     Anterior ({formatDate(hoveredIndex < data.comparison.periodDays ? shiftIsoDate(data.dailyPerformance.previousFirstDate, hoveredIndex) : null)}): {hoveredPrevious === null || hoveredPrevious === undefined ? "Sem dado" : formatChartValue(metric, hoveredPrevious)}
                   </text>
                   <text className={`chart-tooltip-change ${periodChange.direction}`} x={tooltipX + 12} y="101">
-                    Vs. período anterior: {periodChange.label}
+                    Em relação ao período anterior: {periodChange.label}
                   </text>
                   <text className={`chart-tooltip-change ${dayChange.direction}`} x={tooltipX + 12} y="118">
-                    Vs. dia anterior: {dayChange.label}
+                    Em relação ao dia anterior: {dayChange.label}
                   </text>
                 </g>
               ) : null}
@@ -577,7 +647,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
         ) : (
           <div className="chart-empty-state">
             <BarChart3 size={22} />
-            <span>{data.connected ? "Não há pontos diários neste recorte." : "O gráfico será exibido após a conexão com o Supabase."}</span>
+            <span>{data.connected ? "Não há dados diários neste período." : "Não há dados disponíveis para exibir o gráfico."}</span>
           </div>
         )}
       </section>
@@ -605,7 +675,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
       return (
         <span className={`comparison-indicator comparison-${hasGrowth ? "up" : "neutral"}${compact ? " comparison-compact" : ""}`}>
           {hasGrowth ? <ArrowUpRight size={13} /> : <Minus size={13} />}
-          {hasGrowth ? "Novo vs. período anterior" : "Sem variação vs. período anterior"}
+          {hasGrowth ? "Novo no período" : "Sem variação em relação ao período anterior"}
         </span>
       );
     }
@@ -623,7 +693,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
         className={`comparison-indicator comparison-${direction}${compact ? " comparison-compact" : ""}`}
         title={`Período principal: ${periodDays} dias; comparação conforme o filtro global`}
       >
-        <Icon size={13} /> {formattedChange}% vs. período anterior
+        <Icon size={13} /> {formattedChange}% em relação ao período anterior
       </span>
     );
   }
@@ -748,7 +818,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
     return (
       <span className={`rank-cell rank-${movement > 0 ? "up" : movement < 0 ? "down" : "neutral"}`}>
         <strong>#{current}</strong>
-        <small>{movement > 0 ? `Subiu ${movement}` : movement < 0 ? `Caiu ${Math.abs(movement)}` : "Manteve"}</small>
+          <small>{movement > 0 ? `Subiu ${movement} ${movement === 1 ? "posição" : "posições"}` : movement < 0 ? `Caiu ${Math.abs(movement)} ${Math.abs(movement) === 1 ? "posição" : "posições"}` : "Manteve a posição"}</small>
       </span>
     );
   }
@@ -766,9 +836,9 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
               <th>Anúncio</th>
               <th className="number-cell">Visitas</th>
               <th className="number-cell">Pedidos</th>
-              <th className="number-cell">Unid.</th>
+              <th className="number-cell">Unidades</th>
               <th className="number-cell">Valor bruto</th>
-              <th className="number-cell">Conv.</th>
+              <th className="number-cell">Conversão</th>
               <th>Variação</th>
               <th>Posição por valor</th>
             </tr>
@@ -782,23 +852,23 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                 </td>
                 <td className="number-cell comparison-value-cell">
                   <strong>{formatNumber(product.current.visits)}</strong>
-                  <small>ant. {formatNumber(product.previous.visits)}</small>
+                  <small>Anterior: {formatNumber(product.previous.visits)}</small>
                 </td>
                 <td className="number-cell comparison-value-cell">
                   <strong>{formatNumber(product.current.ordersCount)}</strong>
-                  <small>ant. {formatNumber(product.previous.ordersCount)}</small>
+                  <small>Anterior: {formatNumber(product.previous.ordersCount)}</small>
                 </td>
                 <td className="number-cell comparison-value-cell">
                   <strong>{formatNumber(product.current.unitsSold)}</strong>
-                  <small>ant. {formatNumber(product.previous.unitsSold)}</small>
+                  <small>Anterior: {formatNumber(product.previous.unitsSold)}</small>
                 </td>
                 <td className="number-cell comparison-value-cell">
                   <strong>{formatCurrency(product.current.grossAmount)}</strong>
-                  <small>ant. {formatCurrency(product.previous.grossAmount)}</small>
+                  <small>Anterior: {formatCurrency(product.previous.grossAmount)}</small>
                 </td>
                 <td className="number-cell comparison-value-cell">
                   <strong>{formatTablePercent(product.current.conversionRatePercent)}</strong>
-                  <small>ant. {formatTablePercent(product.previous.conversionRatePercent)}</small>
+                  <small>Anterior: {formatTablePercent(product.previous.conversionRatePercent)}</small>
                 </td>
                 <td>
                   <ProductVariation current={product.current.grossAmount} previous={product.previous.grossAmount} />
@@ -859,7 +929,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Pedidos"
             value={formatNumber(data.sales.ordersCount)}
-            detail={`Janela de ${data.periodDays} dias`}
+            detail={`Período de ${data.periodDays} dias`}
             icon={ShoppingBag}
             comparison={{
               current: data.sales.ordersCount,
@@ -869,7 +939,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           />
           <KpiCard
             label="Ticket médio"
-            value={data.sales.avgTicket === null ? "Após conexão" : formatCurrency(data.sales.avgTicket)}
+            value={data.sales.avgTicket === null ? "Sem dados" : formatCurrency(data.sales.avgTicket)}
             detail="Valor bruto dividido por pedidos"
             icon={Gauge}
             tone="good"
@@ -895,15 +965,15 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
   
         <section className="panel commerce-flow-panel">
           <PanelTitle
-            title="Motor comercial do período"
-            subtitle="A leitura conecta aquisição de tráfego, eficiência do anúncio e resultado comercial."
+            title="Resumo comercial"
+            subtitle="Visitas, conversão, pedidos e valor bruto no período selecionado."
             action={<span className="tiny-label">{data.periodDays} dias</span>}
           />
           <div className="commerce-flow" aria-label="Visitas, conversão, pedidos e valor bruto">
             <div className="commerce-flow-step">
               <span className="flow-icon"><Eye size={17} /></span>
               <small>01 · Tráfego</small>
-              <strong>{data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}</strong>
+              <strong>{data.sales.visits === null ? "Sem dados" : formatNumber(data.sales.visits)}</strong>
               <p>Visitas aos anúncios</p>
             </div>
             <span className="flow-arrow" aria-hidden="true">→</span>
@@ -977,7 +1047,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           </article>
   
           <article className="panel decision-panel">
-            <PanelTitle title="Leitura para decisão" subtitle="O que merece atenção agora" />
+            <PanelTitle title="Pontos de atenção" subtitle="Anúncios que atendem aos critérios definidos abaixo" />
             <ul className="decision-list">
               <li>
                 <span className={`decision-icon ${lowConversionProducts.length ? "warning" : "good"}`}>
@@ -994,7 +1064,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                 </span>
                 <div>
                   <strong>{stockRiskProducts.length ? `${stockRiskProducts.length} anúncios com sinal de estoque curto` : "Sem risco de estoque entre os líderes"}</strong>
-                  <small>{stockRiskProducts.length ? "O estoque disponível é menor ou igual às unidades vendidas na janela." : "Os anúncios do ranking não atingiram o critério de atenção desta leitura."}</small>
+                  <small>{stockRiskProducts.length ? "O estoque disponível é menor ou igual às unidades vendidas no período." : "Os anúncios do ranking não atingiram este critério."}</small>
                 </div>
               </li>
               <li>
@@ -1012,8 +1082,8 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
   
         <section className="panel table-panel">
           <PanelTitle
-            title="Top anúncios por valor bruto"
-            subtitle={`Desempenho acumulado na janela de ${data.periodDays} dias.`}
+            title="Anúncios com maior valor bruto"
+            subtitle={`Desempenho acumulado no período de ${data.periodDays} dias.`}
           />
           <TopProductsTable data={data} />
         </section>
@@ -1028,7 +1098,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <div>
             <Database size={18} />
             <span>
-              <strong>Recorte validado:</strong> vendas associadas ao catálogo consolidado.
+              <strong>Dados considerados:</strong> vendas associadas ao catálogo consolidado.
             </span>
           </div>
           <span>Última data: {formatDate(data.sales.lastPerformanceDate)}</span>
@@ -1049,7 +1119,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Pedidos"
             value={formatNumber(data.sales.ordersCount)}
-            detail="Pedidos no recorte"
+            detail="Pedidos no período"
             icon={ShoppingBag}
             comparison={{
               current: data.sales.ordersCount,
@@ -1062,7 +1132,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
             value={formatNumber(data.sales.unitsSold)}
             detail={`${(data.sales.unitsSold / Math.max(data.sales.ordersCount, 1)).toLocaleString("pt-BR", {
               maximumFractionDigits: 2,
-            })} unidade por pedido`}
+            })} unidades por pedido`}
             icon={Box}
             tone="good"
             comparison={{
@@ -1073,7 +1143,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           />
           <KpiCard
             label="Média por pedido"
-            value={data.sales.avgTicket === null ? "Após conexão" : formatCurrency(data.sales.avgTicket)}
+            value={data.sales.avgTicket === null ? "Sem dados" : formatCurrency(data.sales.avgTicket)}
             detail="Valor bruto dividido por pedidos"
             icon={Gauge}
             comparison={{
@@ -1156,7 +1226,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Unidades vendidas"
             value={formatNumber(data.sales.unitsSold)}
-            detail={`Janela de ${data.periodDays} dias`}
+            detail={`Período de ${data.periodDays} dias`}
             icon={TrendingUp}
             tone="warning"
             comparison={{
@@ -1192,7 +1262,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                   <strong>Estoque crítico</strong>
                   <small>Priorizar reposição por giro e valor vendido.</small>
                 </p>
-                <b>{data.connected ? "Ativo" : "Após conexão"}</b>
+                <b>{data.connected ? "Disponível" : "Sem dados"}</b>
               </div>
               <div>
                 <span className="action-icon">
@@ -1202,7 +1272,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                   <strong>Anúncio pausado com estoque</strong>
                   <small>Identificar receita potencial bloqueada.</small>
                 </p>
-                <b>{data.connected ? "Ativo" : "Após conexão"}</b>
+                <b>{data.connected ? "Disponível" : "Sem dados"}</b>
               </div>
               <div>
                 <span className="action-icon">
@@ -1212,7 +1282,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                   <strong>Sem venda com visita</strong>
                   <small>Revisar preço, conteúdo e oferta.</small>
                 </p>
-                <b>{data.connected ? "Ativo" : "Após conexão"}</b>
+                <b>{data.connected ? "Disponível" : "Sem dados"}</b>
               </div>
             </div>
           </article>
@@ -1261,10 +1331,10 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           </div>
         </section>
         <section className="kpi-grid">
-          <KpiCard label="Janela de pedidos" value={`${data.periodDays} dias`} detail="Período selecionado" icon={CalendarDays} tone="brand" />
+          <KpiCard label="Período analisado" value={`${data.periodDays} dias`} detail="Filtro selecionado" icon={CalendarDays} tone="brand" />
           <KpiCard
             label="Visitas"
-            value={data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}
+            value={data.sales.visits === null ? "Sem dados" : formatNumber(data.sales.visits)}
             detail="Detalhamento diário"
             icon={Eye}
             comparison={{
@@ -1273,7 +1343,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
               periodDays: data.periodDays,
             }}
           />
-          <KpiCard label="Grão analítico" value="Item + dia" detail="Comparação no mesmo nível" icon={Database} />
+          <KpiCard label="Nível de detalhe" value="Anúncio por dia" detail="Dados organizados por anúncio e data" icon={Database} />
           <KpiCard
             label="Conversão"
             value={formatPercent(data.sales.conversionRatePercent)}
@@ -1289,8 +1359,8 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
         </section>
         <section className="panel table-panel">
           <PanelTitle
-            title={data.topProducts.length ? "Top anúncios por valor bruto" : "Matriz de decisão por anúncio"}
-            subtitle={data.topProducts.length ? "Anúncios agregados pela view diária do Supabase." : "Estrutura pronta para receber as métricas reais do Supabase."}
+            title={data.topProducts.length ? "Anúncios com maior valor bruto" : "Desempenho por anúncio"}
+            subtitle={data.topProducts.length ? "Resultados consolidados por anúncio no período selecionado." : "Ainda não há dados por anúncio neste período."}
           />
           <div className="table-wrap">
             <table>
@@ -1300,9 +1370,9 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                     <tr>
                       <th>Anúncio</th>
                       <th className="number-cell">Visitas</th>
-                      <th className="number-cell">Unid.</th>
+                      <th className="number-cell">Unidades</th>
                       <th className="number-cell">Valor</th>
-                      <th className="number-cell">Conv.</th>
+                      <th className="number-cell">Conversão</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1379,11 +1449,9 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           </span>
           <div>
             <h2>Tráfego e conversão no período selecionado de {data.periodDays} dias</h2>
-            <p>
-              A visão usa <code>item_visits_daily</code> cruzada com vendas no mesmo item e data.
-            </p>
+            <p>Visitas e vendas são comparadas por anúncio e por dia.</p>
           </div>
-          <span className="status-badge status-good">{data.connected ? "Supabase ativo" : "Estrutura pronta"}</span>
+          <span className={`status-badge ${data.connected ? "status-good" : "status-neutral"}`}>{data.connected ? "Dados atualizados" : "Sem dados disponíveis"}</span>
         </div>
         <section className="content-grid equal">
           <article className="panel">
@@ -1392,7 +1460,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
               <div style={{ width: "100%" }}>
                 <span>Visitas</span>
                 <div className="funnel-value">
-                  <b>{data.sales.visits === null ? "Após conexão" : formatNumber(data.sales.visits)}</b>
+                  <b>{data.sales.visits === null ? "Sem dados" : formatNumber(data.sales.visits)}</b>
                   <ComparisonIndicator
                     current={data.sales.visits}
                     previous={data.comparison.sales?.visits ?? null}
@@ -1457,46 +1525,18 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
       ? buildStageEventAverages(stages)
       : buildLogisticsEventAverages(slaBreakdown);
     const flowStages = [...stages].sort((a, b) => a.stageOrder - b.stageOrder);
-    const hasLogisticsData = hasSlaData || stages.length > 0;
-    const bottleneck = eventAverages[0] ?? null;
-    const maxEventAverage = Math.max(...eventAverages.map((event) => event.averageElapsedMinutes), 1);
-    const activeOverdue = dispatch.overdueCount + delivery.overdueCount;
+    const comparableEvents = eventAverages.filter((event) => event.coveragePercent === null || event.coveragePercent >= 50);
+    const bottleneck = comparableEvents[0] ?? null;
+    const maxEventAverage = Math.max(...comparableEvents.map((event) => event.averageElapsedMinutes), 1);
+    const lowCoverageStages = flowStages.filter((stage) => (stage.coveragePercent ?? 0) < 50).length;
   
     return (
       <>
-        <section className="logistics-hero">
-          <div className="logistics-hero-copy">
-            <span className="logistics-eyebrow"><Truck size={14} /> Controle logístico</span>
-            <h2>Do pedido à entrega, sem zonas cegas</h2>
-            <p>SLA, gargalos e impacto financeiro reunidos em uma leitura operacional do período.</p>
-            <span className={`logistics-live-state ${hasLogisticsData ? "is-live" : ""}`}>
-              <i /> {hasLogisticsData ? "Dados logísticos ativos" : "Aguardando dados logísticos"}
-            </span>
-          </div>
-          <div className="logistics-hero-stats">
-            <div>
-              <span>Maior tempo médio</span>
-              <strong>{bottleneck ? formatLogisticsDuration(bottleneck.averageElapsedMinutes, null) : "—"}</strong>
-              <small>{bottleneck?.eventName ?? "Sem eventos concluídos"}</small>
-            </div>
-            <div>
-              <span>Vencidos agora</span>
-              <strong>{formatNumber(activeOverdue)}</strong>
-              <small>Despacho + entrega</small>
-            </div>
-            <div>
-              <span>Custo reverso</span>
-              <strong>{formatTablePercent(economics.returnCostOverGrossPercent)}</strong>
-              <small>Sobre valor pago</small>
-            </div>
-          </div>
-        </section>
-  
         <section className="kpi-grid">
           <KpiCard
             label="Despacho no prazo"
             value={formatTablePercent(dispatch.onTimePercent)}
-            detail={dispatch.completedCount ? `${formatNumber(dispatch.onTimeCount)} de ${formatNumber(dispatch.completedCount)} despachos concluídos` : "Sem coorte oficial concluída no período"}
+            detail={dispatch.completedCount ? `${formatNumber(dispatch.onTimeCount)} de ${formatNumber(dispatch.completedCount)} despachos concluídos` : "Nenhum despacho acompanhado desde o início foi concluído no período"}
             icon={PackageCheck}
             tone="good"
             comparison={{ current: dispatch.onTimePercent, previous: comparisonDispatch?.onTimePercent ?? null, periodDays: data.periodDays }}
@@ -1504,7 +1544,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Entrega no prazo"
             value={formatTablePercent(delivery.onTimePercent)}
-            detail={delivery.completedCount ? `${formatNumber(delivery.onTimeCount)} de ${formatNumber(delivery.completedCount)} entregas concluídas` : "Sem coorte oficial concluída no período"}
+            detail={delivery.completedCount ? `${formatNumber(delivery.onTimeCount)} de ${formatNumber(delivery.completedCount)} entregas concluídas` : "Nenhuma entrega acompanhada desde o início foi concluída no período"}
             icon={Truck}
             tone="brand"
             comparison={{ current: delivery.onTimePercent, previous: comparisonDelivery?.onTimePercent ?? null, periodDays: data.periodDays }}
@@ -1512,15 +1552,15 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Despachos vencidos"
             value={formatNumber(dispatch.overdueCount)}
-            detail={`${formatNumber(dispatch.pendingCount)} pendente(s) ainda dentro do prazo · ${formatNumber(dispatch.cancelledCount)} cancelado(s)`}
+            detail={`${formatNumber(dispatch.pendingCount)} dentro do prazo · ${formatNumber(dispatch.cancelledCount)} cancelados`}
             icon={AlertTriangle}
             tone={dispatch.overdueCount ? "warning" : "good"}
             comparison={{ current: dispatch.overdueCount, previous: comparisonDispatch?.overdueCount ?? null, periodDays: data.periodDays }}
           />
           <KpiCard
-            label="Custo reverso / valor pago"
+            label="Custo de devoluções / valor pago"
             value={formatTablePercent(economics.returnCostOverGrossPercent)}
-            detail={hasEconomicsData ? `${formatCurrency(economics.returnShippingCost)} atribuídos à coorte de venda` : "Sem custos de devolução atribuídos no período"}
+            detail={hasEconomicsData ? `${formatCurrency(economics.returnShippingCost)} vinculados aos pedidos do período de origem` : "Sem custos de devolução vinculados ao período"}
             icon={RotateCcw}
             tone="warning"
             comparison={{ current: economics.returnCostOverGrossPercent, previous: comparisonEconomics?.returnCostOverGrossPercent ?? null, periodDays: data.periodDays }}
@@ -1530,41 +1570,63 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
         {flowStages.length ? (
           <section className="panel logistics-stage-flow-panel">
             <PanelTitle
-              title="Fluxo intermediário observado"
-              subtitle="Cada etapa usa os horários realmente informados pelo histórico de shipments do Mercado Livre."
-              action={<span className="tiny-label">{flowStages.length} etapas com cobertura</span>}
+              title="Etapas da entrega"
+              subtitle="Tempo médio calculado entre os eventos registrados pelo Mercado Livre."
+              action={<span className="tiny-label">{flowStages.length} etapas analisadas</span>}
             />
-            <div className="logistics-stage-flow">
-              {flowStages.map((stage) => (
-                <div className="stage-flow-node" key={stage.stageCode}>
-                  <span>{stage.stageOrder.toString().padStart(2, "0")}</span>
-                  <strong>{stage.stageName}</strong>
-                  <b>{formatLogisticsDuration(stage.averageDurationMinutes, null)}</b>
-                  <small>{formatNumber(stage.completedCount)} de {formatNumber(stage.startedCount)} concluídos · {formatTablePercent(stage.coveragePercent)} cobertura</small>
-                </div>
-              ))}
-            </div>
+            <ol className="logistics-stage-flow">
+              {flowStages.map((stage) => {
+                const isLowCoverage = (stage.coveragePercent ?? 0) < 50;
+                const isSlowestComparable = bottleneck?.stageCode === stage.stageCode;
+
+                return (
+                  <li
+                    className={`stage-flow-node${isLowCoverage ? " is-low-coverage" : ""}${isSlowestComparable ? " is-slowest" : ""}`}
+                    key={stage.stageCode}
+                  >
+                    <div className="stage-flow-heading">
+                      <span>{stage.stageOrder.toString().padStart(2, "0")}</span>
+                      <small className={isLowCoverage ? "coverage-warning" : "coverage-ok"}>
+                        {isLowCoverage ? "Poucos registros" : "Boa cobertura"}
+                      </small>
+                    </div>
+                    <h3>{logisticsStageLabel(stage.stageCode, stage.stageName)}</h3>
+                    <p className="stage-flow-duration">{formatLogisticsDuration(stage.averageDurationMinutes, null)}</p>
+                    <div className="stage-coverage-track" aria-label={`${formatTablePercent(stage.coveragePercent)} de cobertura`}>
+                      <span style={{ width: `${Math.min(Math.max(stage.coveragePercent ?? 0, 0), 100)}%` }} />
+                    </div>
+                    <p className="stage-flow-detail">
+                      {formatNumber(stage.completedCount)} de {formatNumber(stage.startedCount)} envios · {formatTablePercent(stage.coveragePercent)} com os dois eventos
+                    </p>
+                  </li>
+                );
+              })}
+            </ol>
+            {lowCoverageStages ? (
+              <p className="logistics-coverage-note">
+                <AlertTriangle size={15} /> {lowCoverageStages === 1 ? "Uma etapa tem" : `${lowCoverageStages} etapas têm`} menos de 50% dos eventos necessários. Esses tempos não entram na identificação da etapa mais demorada.
+              </p>
+            ) : null}
           </section>
         ) : null}
   
         <section className="content-grid two-one logistics-bottleneck-grid">
           <article className="panel event-sla-panel">
             <PanelTitle
-              title="Tempo médio por evento logístico"
-              subtitle="Média real ponderada pelo volume concluído; barras maiores indicam etapas mais demoradas."
-              action={bottleneck ? <span className="status-badge status-warning">Gargalo: {bottleneck.eventName}</span> : null}
+              title="Comparação dos tempos por etapa"
+              subtitle="Considera apenas etapas com pelo menos 50% dos eventos registrados."
             />
-            {eventAverages.length ? (
+            {comparableEvents.length ? (
               <div className="event-sla-bars">
-                {eventAverages.map((event, index) => {
+                {comparableEvents.map((event, index) => {
                   return (
-                    <div className={`event-sla-row ${index === 0 ? "is-bottleneck" : ""}`} key={event.eventName}>
+                    <div className={`event-sla-row ${event.eventName === bottleneck?.eventName ? "is-bottleneck" : ""}`} key={event.eventName}>
                       <div className="event-sla-label">
                         <span>{index + 1}</span>
                         <div>
                           <strong>{event.eventName}</strong>
                           <small>
-                            {formatNumber(event.completedCount)} concluídos · {formatTablePercent(event.coveragePercent)} cobertura
+                            {formatNumber(event.completedCount)} envios concluídos · {formatTablePercent(event.coveragePercent)} de cobertura
                             {event.targetMinutes === null ? "" : ` · ${formatTablePercent(event.onTimePercent)} dentro da meta`}
                           </small>
                         </div>
@@ -1578,56 +1640,55 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                 })}
               </div>
             ) : (
-              <div className="chart-empty-state"><Activity size={18} /> Ainda não há eventos concluídos para calcular o tempo médio.</div>
+              <div className="chart-empty-state"><Activity size={18} /> Ainda não há etapas com cobertura suficiente para comparar os tempos.</div>
             )}
           </article>
   
           <article className="panel bottleneck-summary-panel">
-            <PanelTitle title="Leitura do gargalo" subtitle="Ponto de atenção prioritário no período." />
+            <PanelTitle title="Etapa mais demorada" subtitle="Maior tempo médio entre as etapas com cobertura suficiente." />
             {bottleneck ? (
               <>
                 <div className="bottleneck-spotlight">
-                  <span><Gauge size={18} /> Etapa mais lenta</span>
+                  <span><Gauge size={18} /> Maior tempo médio</span>
                   <strong>{bottleneck.eventName}</strong>
                 <b>{formatLogisticsDuration(bottleneck.averageElapsedMinutes, null)}</b>
-                <small>Média de {formatNumber(bottleneck.completedCount)} evento(s) concluído(s)</small>
+                <small>{formatNumber(bottleneck.completedCount)} envios concluídos · {formatTablePercent(bottleneck.coveragePercent)} de cobertura</small>
               </div>
               <div className="bottleneck-facts">
                 <div><span>Mediana</span><strong>{formatLogisticsDuration(bottleneck.medianElapsedMinutes, null)}</strong></div>
-                <div><span>P90</span><strong>{formatLogisticsDuration(bottleneck.p90ElapsedMinutes, null)}</strong></div>
+                <div><span>90% concluídos em até</span><strong>{formatLogisticsDuration(bottleneck.p90ElapsedMinutes, null)}</strong></div>
                 <div><span>Acima da meta</span><strong>{bottleneck.targetMinutes === null ? "—" : formatNumber(bottleneck.lateCount)}</strong></div>
                 <div><span>Em andamento</span><strong>{formatNumber(bottleneck.inProgressCount)}</strong></div>
               </div>
-                <p className="bottleneck-guidance">Priorize a causa operacional desta etapa antes de otimizar eventos mais curtos.</p>
               </>
-            ) : <p className="empty-table-message">O gargalo será identificado quando houver eventos concluídos.</p>}
+            ) : <p className="empty-table-message">A etapa mais demorada será mostrada quando houver cobertura suficiente.</p>}
           </article>
         </section>
   
         <section className="content-grid equal">
           <article className="panel">
-            <PanelTitle title="Backlog operacional" subtitle="Envios ativos; cancelamentos e falhas terminais não entram como atraso em aberto." />
+            <PanelTitle title="Envios pendentes" subtitle="Cancelamentos e entregas encerradas sem sucesso não são contados como atrasos em aberto." />
             <div className="logistics-backlog-grid">
-              <div><span>Despacho pendente</span><strong>{formatNumber(dispatch.pendingCount)}</strong><small>{formatNumber(dispatch.overdueCount)} vencido(s)</small></div>
-              <div><span>Entrega pendente</span><strong>{formatNumber(delivery.pendingCount)}</strong><small>{formatNumber(delivery.overdueCount)} vencida(s)</small></div>
+              <div><span>Despachos pendentes</span><strong>{formatNumber(dispatch.pendingCount)}</strong><small>{formatNumber(dispatch.overdueCount)} fora do prazo</small></div>
+              <div><span>Entregas pendentes</span><strong>{formatNumber(delivery.pendingCount)}</strong><small>{formatNumber(delivery.overdueCount)} fora do prazo</small></div>
               <div><span>Atraso médio no despacho</span><strong>{formatLogisticsDuration(dispatch.averageBreachMinutes, dispatch.averageBreachDays)}</strong><small>Somente despachos concluídos em atraso</small></div>
               <div><span>Atraso médio na entrega</span><strong>{formatLogisticsDuration(delivery.averageBreachMinutes, delivery.averageBreachDays)}</strong><small>Somente entregas concluídas em atraso</small></div>
             </div>
           </article>
           <article className="panel">
-            <PanelTitle title="Pós-venda e custo logístico" subtitle="Custos reversos são atribuídos à data do pedido pago, não à data de captura da cobrança." />
+            <PanelTitle title="Devoluções e custos de frete" subtitle="O custo da devolução é vinculado à data do pedido pago." />
             <dl className="logistics-economics-grid">
               <div><dt>Pedidos com devolução</dt><dd>{formatNumber(economics.ordersWithReturn)}</dd></div>
               <div><dt>Unidades devolvidas</dt><dd>{formatNumber(economics.returnedUnits)}</dd></div>
-              <div><dt>Custo reverso</dt><dd>{formatCurrency(economics.returnShippingCost)}</dd></div>
-              <div><dt>Frete total / valor pago</dt><dd>{formatTablePercent(economics.totalShippingCostOverGrossPercent)}</dd></div>
+              <div><dt>Custo das devoluções</dt><dd>{formatCurrency(economics.returnShippingCost)}</dd></div>
+              <div><dt>Frete total sobre vendas pagas</dt><dd>{formatTablePercent(economics.totalShippingCostOverGrossPercent)}</dd></div>
             </dl>
           </article>
         </section>
   
         <section className="content-grid equal">
           <article className="panel">
-            <PanelTitle title="Estoque Full atual" subtitle="Posição corrente de fulfillment; este indicador não é reconstruído para datas passadas." />
+            <PanelTitle title="Estoque atual no Full" subtitle="Posição atual do estoque; não representa datas anteriores." />
             {fulfillment.skuCount ? (
               <div className="fulfillment-summary">
                 <div className="fulfillment-availability"><span style={{ width: `${fulfillment.availablePercent ?? 0}%` }} /></div>
@@ -1638,17 +1699,17 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                 </div>
                 <small>{formatTablePercent(fulfillment.availablePercent)} disponível{fulfillment.syncedAt ? ` · atualizado em ${new Intl.DateTimeFormat("pt-BR").format(new Date(fulfillment.syncedAt))}` : ""}</small>
               </div>
-            ) : <p className="empty-table-message">Não há posição de estoque Full disponível para esta conta.</p>}
+            ) : <p className="empty-table-message">Não há dados de estoque do Full para esta conta.</p>}
           </article>
           <article className="panel">
-            <PanelTitle title="Metas internas cadastradas" subtitle="Metas operacionais próprias, exibidas separadamente dos compromissos do Mercado Livre." />
+            <PanelTitle title="Metas internas" subtitle="Prazos definidos pela operação, separados dos prazos do Mercado Livre." />
             {policies.length ? (
               <div className="logistics-policies">
                 {policies.map((policy) => (
                   <div key={`${policy.name}-${policy.logisticType ?? "all"}`}>
                     <span>{policy.name}</span>
                     <strong>{formatLogisticsDuration(policy.targetMinutes, null)}</strong>
-                    <small>{policy.logisticType ?? "Todas as modalidades"} · {policy.startEventCode} → {policy.endEventCode}</small>
+                    <small>{policy.logisticType ? logisticsTypeLabel(policy.logisticType) : "Todas as modalidades"} · {logisticsEventLabel(policy.startEventCode)} → {logisticsEventLabel(policy.endEventCode)}</small>
                   </div>
                 ))}
               </div>
@@ -1657,16 +1718,16 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
         </section>
   
         <section className="panel table-panel">
-          <PanelTitle title="SLA por evento e modalidade" subtitle="A tabela preserva a origem da meta e a qualidade da medição para manter a leitura auditável." />
+          <PanelTitle title="Cumprimento dos prazos por modalidade" subtitle="Detalhamento por tipo de envio, origem do prazo e forma de medição." />
           {hasSlaData ? (
             <div className="table-wrap">
               <table className="logistics-sla-table">
-                <thead><tr><th>Evento</th><th>Modalidade</th><th>Referência</th><th>Leitura</th><th className="number-cell">Tempo médio</th><th className="number-cell">Concluídos</th><th className="number-cell">No prazo</th><th className="number-cell">Atrasados</th><th className="number-cell">Vencidos</th></tr></thead>
+                <thead><tr><th>Etapa</th><th>Modalidade</th><th>Prazo de referência</th><th>Tipo de medição</th><th className="number-cell">Tempo médio</th><th className="number-cell">Concluídos</th><th className="number-cell">No prazo</th><th className="number-cell">Concluídos com atraso</th><th className="number-cell">Pendentes em atraso</th></tr></thead>
                 <tbody>
                   {slaBreakdown.map((row) => (
                     <tr key={`${row.eventName}-${row.logisticType}-${row.targetSource}-${row.measurementQuality}`}>
                       <td className="primary-cell">{row.eventName}</td>
-                      <td>{row.logisticType ?? "—"}</td>
+                      <td>{logisticsTypeLabel(row.logisticType)}</td>
                       <td>{logisticsSourceLabel(row.targetSource)}</td>
                       <td><span className={`status-badge ${row.measurementQuality === "prospective" ? "status-good" : "status-neutral"}`}>{logisticsQualityLabel(row.measurementQuality)}</span></td>
                       <td className="number-cell primary-cell">{formatLogisticsDuration(row.averageElapsedMinutes, null)}</td>
@@ -1679,7 +1740,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                 </tbody>
               </table>
             </div>
-          ) : <p className="empty-table-message">Ainda não há linhas de SLA no período selecionado.</p>}
+          ) : <p className="empty-table-message">Ainda não há dados de prazo no período selecionado.</p>}
         </section>
       </>
     );
@@ -1734,12 +1795,12 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
             <h2>{sellerName}</h2>
             <p>
               {snapshotDate
-                ? `Snapshot selecionado: ${formatDate(snapshotDate)} · ${availableSnapshotDays} dia(s) registrados.`
-                : "Ainda não há snapshot do Seller no período selecionado."}
+                ? `Dados de ${formatDate(snapshotDate)} · ${formatNumber(availableSnapshotDays)} ${availableSnapshotDays === 1 ? "dia disponível" : "dias disponíveis"}.`
+                : "Ainda não há dados da conta no período selecionado."}
             </p>
           </div>
           <span className="status-badge status-good">
-            {currentSnapshot?.powerSellerStatus ?? profile.powerSellerStatus ?? "Seller ativo"}
+            {accountLevelLabel(currentSnapshot?.powerSellerStatus ?? profile.powerSellerStatus)}
           </span>
         </section>
   
@@ -1747,28 +1808,28 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Reputação"
             value={reputationLabel(currentSnapshot?.reputationLevelId ?? null)}
-            detail={snapshotDate ? `Snapshot de ${formatDate(snapshotDate)}` : "Sem snapshot no período"}
+            detail={snapshotDate ? `Registro de ${formatDate(snapshotDate)}` : "Sem dados no período"}
             icon={ShieldCheck}
             tone="brand"
           />
           <KpiCard
-            label="Reclamações ML"
+            label="Reclamações no Mercado Livre"
             value={formatSellerRate(currentSnapshot?.claimsRate ?? null)}
-            detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.claimsValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.claimsRate, comparisonSnapshot?.claimsRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Sem snapshot no período"}
+            detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.claimsValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.claimsRate, comparisonSnapshot?.claimsRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Sem dados no período"}
             icon={Users}
             tone="warning"
           />
           <KpiCard
-            label="Atrasos ML"
+            label="Atrasos no Mercado Livre"
             value={formatSellerRate(currentSnapshot?.delayedHandlingTimeRate ?? null)}
-            detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.delayedHandlingTimeValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.delayedHandlingTimeRate, comparisonSnapshot?.delayedHandlingTimeRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Sem snapshot no período"}
+            detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.delayedHandlingTimeValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.delayedHandlingTimeRate, comparisonSnapshot?.delayedHandlingTimeRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Sem dados no período"}
             icon={Activity}
             tone="warning"
           />
           <KpiCard
-            label="Cancelamentos ML"
+            label="Cancelamentos no Mercado Livre"
             value={formatSellerRate(currentSnapshot?.cancellationsRate ?? null)}
-            detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.cancellationsValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.cancellationsRate, comparisonSnapshot?.cancellationsRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Métrica oficial do Seller"}
+            detail={currentSnapshot ? `${formatSnapshotValue(currentSnapshot.cancellationsValue)} ocorrências · ${snapshotDeltaText(currentSnapshot.cancellationsRate, comparisonSnapshot?.cancellationsRate ?? null, comparisonSnapshot?.snapshotDate ?? null)}` : "Indicador oficial do Mercado Livre"}
             icon={X}
             tone="warning"
           />
@@ -1778,7 +1839,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <div>
             <AlertTriangle size={16} />
             <span>
-              <strong>Leituras diferentes:</strong> “Cancelamentos ML” é a métrica móvel do Mercado Livre; abaixo, o impacto é calculado pelos pedidos cancelados no período.
+              <strong>Indicadores diferentes:</strong> o índice do Mercado Livre usa um período próprio; abaixo, o impacto considera os pedidos cancelados no período selecionado.
             </span>
           </div>
         </div>
@@ -1818,14 +1879,14 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <article className="panel">
             <PanelTitle
               title="Cancelamentos por dia"
-              subtitle="Quantidade de pedidos cancelados na janela principal do filtro."
+              subtitle="Quantidade de pedidos cancelados no período selecionado."
             />
             <CancellationTrend data={data} />
           </article>
           <article className="panel">
             <PanelTitle
-              title="Snapshot do Seller"
-              subtitle={profile.transactionsPeriod ? `Janela informada pelo Mercado Livre: ${profile.transactionsPeriod}.` : "Métricas oficiais retornadas pela API do Mercado Livre."}
+              title="Resumo da conta"
+              subtitle={profile.transactionsPeriod ? `Período informado pelo Mercado Livre: ${transactionsPeriodLabel(profile.transactionsPeriod)}.` : "Indicadores oficiais do Mercado Livre."}
             />
             <dl className="seller-snapshot-grid">
               <div><dt>Transações</dt><dd>{formatSnapshotValue(currentSnapshot?.transactionsTotal ?? null)}</dd></div>
@@ -1842,8 +1903,8 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
   
         <section className="panel table-panel">
           <PanelTitle
-            title="Histórico de snapshots disponíveis"
-            subtitle="Somente dias realmente coletados pelo n8n; não preenchemos lacunas com estimativas."
+            title="Histórico da conta"
+            subtitle="Somente datas com dados disponíveis; dias sem coleta não são estimados."
           />
           {history.length ? (
             <div className="table-wrap">
@@ -1852,7 +1913,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                   <tr>
                     <th>Data</th>
                     <th>Reputação</th>
-                    <th>Power Seller</th>
+                    <th>Nível da conta</th>
                     <th className="number-cell">Reclamações</th>
                     <th className="number-cell">Atrasos</th>
                     <th className="number-cell">Cancelamentos ML</th>
@@ -1864,7 +1925,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                     <tr key={snapshot.snapshotDate}>
                       <td className="primary-cell">{formatDate(snapshot.snapshotDate)}</td>
                       <td>{reputationLabel(snapshot.reputationLevelId)}</td>
-                      <td>{snapshot.powerSellerStatus ?? "—"}</td>
+                      <td>{accountLevelLabel(snapshot.powerSellerStatus)}</td>
                       <td className="number-cell">{formatSellerRate(snapshot.claimsRate)}</td>
                       <td className="number-cell">{formatSellerRate(snapshot.delayedHandlingTimeRate)}</td>
                       <td className="number-cell">{formatSellerRate(snapshot.cancellationsRate)}</td>
@@ -1875,7 +1936,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
               </table>
             </div>
           ) : (
-            <p className="empty-table-message">Não há snapshots no período selecionado.</p>
+            <p className="empty-table-message">Não há registros da conta no período selecionado.</p>
           )}
         </section>
       </>
@@ -2030,7 +2091,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
         <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
           <div className="brand-block">
             <Image src="/pcxpress-logo.webp" alt="PCXpress" width={160} height={67} priority />
-            <span>Mercado Livre Analytics</span>
+            <span>Painel Mercado Livre</span>
           </div>
           <nav aria-label="Navegação principal">
             <p className="nav-section-label">Análises</p>
@@ -2051,8 +2112,8 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <div className="sidebar-footer">
             <span className="health-dot" />
             <div>
-              <strong>{dashboardData.connected ? "Supabase conectado" : "Dados de fallback"}</strong>
-              <small>{dashboardData.message ?? "Dados operacionais"}</small>
+              <strong>{dashboardData.connected ? "Dados atualizados" : "Dados indisponíveis"}</strong>
+              <small>{dashboardData.connected ? "Base operacional conectada" : "Exibindo dados de demonstração"}</small>
             </div>
           </div>
         </aside>
@@ -2076,7 +2137,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
             </div>
             <div className="topbar-right">
               <span className={dashboardData.connected ? "sync-state" : "sync-state sync-warning"}>
-                <CheckCircle2 size={15} /> {dashboardData.connected ? "Supabase ativo" : "Fallback local"}
+                <CheckCircle2 size={15} /> {dashboardData.connected ? "Dados atualizados" : "Dados de demonstração"}
               </span>
               <div className="period-control" aria-label="Período">
                 {["7d", "30d", "90d"].map((item) => (
@@ -2106,7 +2167,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                   <div>
                     <span className="eyebrow">Filtro global</span>
                     <h2>Escolha o período e a comparação</h2>
-                    <p>O mesmo recorte será aplicado às vendas, visitas, anúncios e gráficos do dashboard.</p>
+                    <p>O mesmo período será aplicado às vendas, visitas, anúncios e gráficos do painel.</p>
                   </div>
                   <button className="icon-button" aria-label="Fechar filtro de datas" onClick={() => setDatePanelOpen(false)}>
                     <X size={18} />
@@ -2228,7 +2289,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                 <span>
                   <strong>{formatDate(dashboardData.dateSelection.currentStart)} a {formatDate(dashboardData.dateSelection.currentEnd)}</strong>
                   {dashboardData.dateSelection.comparisonDays
-                    ? ` vs. ${formatDate(dashboardData.dateSelection.comparisonStart)} a ${formatDate(dashboardData.dateSelection.comparisonEnd)}`
+                    ? ` · comparação: ${formatDate(dashboardData.dateSelection.comparisonStart)} a ${formatDate(dashboardData.dateSelection.comparisonEnd)}`
                     : " · sem comparação"}
                 </span>
               </div>
