@@ -20,7 +20,6 @@
     Minus,
     PackageCheck,
     RefreshCw,
-    RotateCcw,
     Search,
     ShieldCheck,
     ShoppingBag,
@@ -28,7 +27,6 @@
     TrendingUp,
     Truck,
     Users,
-    Wallet,
     X,
     Zap,
   } from "lucide-react";
@@ -38,12 +36,8 @@
     type ComparisonMode,
     type DailyPerformancePoint,
     type DashboardData,
+    type LogisticsTypeFilter,
   } from "./dashboard-types";
-  import {
-    evaluateTrend,
-    type MetricDirection,
-    type TrendSignal,
-  } from "./metric-signals";
   
   type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "logistics" | "seller";
   
@@ -145,29 +139,6 @@
     return value === null ? "—" : formatPercent(value);
   }
   
-  /** Parcela do valor bruto que virou pagamento confirmado. */
-  function paidGrossSharePercent(sales: DashboardData["sales"]) {
-    if (sales.paidGrossAmount === null || sales.grossAmount <= 0) {
-      return null;
-    }
-  
-    return (sales.paidGrossAmount / sales.grossAmount) * 100;
-  }
-  
-  /**
-   * O valor bruto conta pedido criado, inclusive o que foi cancelado depois.
-   * Este detalhe mostra, no mesmo cartão, quanto daquele total foi pago.
-   */
-  function paidGrossDetail(sales: DashboardData["sales"], fallback: string) {
-    if (sales.paidGrossAmount === null) {
-      return fallback;
-    }
-  
-    const share = paidGrossSharePercent(sales);
-  
-    return `${formatCurrency(sales.paidGrossAmount)} pagos${share === null ? "" : ` · ${formatPercent(share)} do bruto`}`;
-  }
-  
   function formatLogisticsDuration(minutes: number | null, days: number | null) {
     if (days !== null) {
       const formattedDays = days.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
@@ -239,85 +210,21 @@
       cross_docking: "Cross docking",
       drop_off: "Postagem",
       self_service: "Envios Flex",
+      flex: "Envios Flex",
     };
     return labels[value] ?? value.replaceAll("_", " ");
   }
-  
-type LogisticsEventAverage = {
-  stageCode: string | null;
-  stageOrder: number | null;
-  eventName: string;
-  completedCount: number;
-  onTimePercent: number | null;
-  lateCount: number;
-  inProgressCount: number;
-  averageElapsedMinutes: number;
-  medianElapsedMinutes: number | null;
-  p90ElapsedMinutes: number | null;
-  coveragePercent: number | null;
-  targetMinutes: number | null;
-};
-  
-  function buildLogisticsEventAverages(rows: DashboardData["logistics"]["slaBreakdown"]): LogisticsEventAverage[] {
-  const events = new Map<string, LogisticsEventAverage & { elapsedTotal: number; onTimeTotal: number }>();
-  
-    for (const row of rows) {
-      if (!row.completedCount || row.averageElapsedMinutes === null) continue;
-  
-      const current = events.get(row.eventName) ?? {
-        stageCode: null,
-        stageOrder: null,
-        eventName: row.eventName,
-        completedCount: 0,
-        onTimePercent: null,
-        lateCount: 0,
-        inProgressCount: 0,
-        averageElapsedMinutes: 0,
-        medianElapsedMinutes: null,
-        p90ElapsedMinutes: null,
-        coveragePercent: null,
-        targetMinutes: null,
-        elapsedTotal: 0,
-        onTimeTotal: 0,
-      };
-      current.completedCount += row.completedCount;
-      current.onTimeTotal += row.onTimeCount;
-      current.lateCount += row.lateCount;
-      current.inProgressCount += row.pendingCount + row.overdueCount;
-      current.elapsedTotal += row.averageElapsedMinutes * row.completedCount;
-      events.set(row.eventName, current);
-    }
-  
-    return Array.from(events.values())
-      .map(({ elapsedTotal, onTimeTotal, ...event }) => ({
-        ...event,
-        onTimePercent: event.completedCount > 0 ? (onTimeTotal / event.completedCount) * 100 : null,
-        averageElapsedMinutes: elapsedTotal / event.completedCount,
-      }))
-      .sort((a, b) => b.averageElapsedMinutes - a.averageElapsedMinutes);
-}
 
-function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): LogisticsEventAverage[] {
-  return stages
-    .filter((stage) => stage.completedCount > 0 && stage.averageDurationMinutes !== null)
-    .map((stage) => ({
-      stageCode: stage.stageCode,
-      stageOrder: stage.stageOrder,
-      eventName: logisticsStageLabel(stage.stageCode, stage.stageName),
-      completedCount: stage.completedCount,
-      onTimePercent: stage.targetMinutes === null
-        ? null
-        : ((stage.completedCount - stage.aboveTargetCount) / stage.completedCount) * 100,
-      lateCount: stage.aboveTargetCount,
-      inProgressCount: stage.inProgressCount,
-      averageElapsedMinutes: stage.averageDurationMinutes ?? 0,
-      medianElapsedMinutes: stage.medianDurationMinutes,
-      p90ElapsedMinutes: stage.p90DurationMinutes,
-      coveragePercent: stage.coveragePercent,
-      targetMinutes: stage.targetMinutes,
-    }))
-    .sort((a, b) => b.averageElapsedMinutes - a.averageElapsedMinutes);
-}
+  const logisticsTypeOptions: { value: LogisticsTypeFilter; label: string }[] = [
+    { value: "all", label: "Todas" },
+    { value: "cross_docking", label: "Cross docking" },
+    { value: "flex", label: "Flex" },
+    { value: "fulfillment", label: "Full" },
+  ];
+
+  function selectedLogisticsTypeLabel(value: LogisticsTypeFilter) {
+    return logisticsTypeOptions.find((option) => option.value === value)?.label ?? "Todas";
+  }
   
   function formatDate(value: string | null) {
     if (!value) {
@@ -687,48 +594,42 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
     current: number | null;
     previous: number | null;
     periodDays: number;
-    /** Em cancelamentos, atrasos e custos, cair é o resultado bom. */
-    direction?: MetricDirection;
   };
   
-  const comparisonArrowIcon = {
-    up: ArrowUpRight,
-    down: ArrowDownRight,
-    flat: Minus,
-  } as const;
-  
-  /** A seta vem do fato (subiu ou caiu); este texto apenas o descreve. */
-  function comparisonText(signal: TrendSignal) {
-    switch (signal.label) {
-      case "Sem base anterior":
-        return "Sem base anterior";
-      case "Novo":
-        return "Novo no período";
-      case "Zerado":
-        return "Zerado no período";
-      case "Sem variação":
-        return "Sem variação em relação ao período anterior";
-      default:
-        return `${signal.label} em relação ao período anterior`;
+  function ComparisonIndicator({ current, previous, periodDays, compact = false }: ComparisonMetric & { compact?: boolean }) {
+    if (current === null || previous === null) {
+      return (
+        <span className={`comparison-indicator comparison-neutral${compact ? " comparison-compact" : ""}`}>
+          <Minus size={13} /> Sem base anterior
+        </span>
+      );
     }
-  }
   
-  function ComparisonIndicator({
-    current,
-    previous,
-    periodDays,
-    direction = "higherIsBetter",
-    compact = false,
-  }: ComparisonMetric & { compact?: boolean }) {
-    const signal = evaluateTrend(current, previous, direction);
-    const Icon = comparisonArrowIcon[signal.arrow];
+    if (previous === 0) {
+      const hasGrowth = current > 0;
+  
+      return (
+        <span className={`comparison-indicator comparison-${hasGrowth ? "up" : "neutral"}${compact ? " comparison-compact" : ""}`}>
+          {hasGrowth ? <ArrowUpRight size={13} /> : <Minus size={13} />}
+          {hasGrowth ? "Novo no período" : "Sem variação em relação ao período anterior"}
+        </span>
+      );
+    }
+  
+    const changePercent = ((current - previous) / Math.abs(previous)) * 100;
+    const direction = changePercent > 0 ? "up" : changePercent < 0 ? "down" : "neutral";
+    const Icon = direction === "up" ? ArrowUpRight : direction === "down" ? ArrowDownRight : Minus;
+    const formattedChange = Math.abs(changePercent).toLocaleString("pt-BR", {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    });
   
     return (
       <span
-        className={`comparison-indicator comparison-${signal.tone}${compact ? " comparison-compact" : ""}`}
+        className={`comparison-indicator comparison-${direction}${compact ? " comparison-compact" : ""}`}
         title={`Período principal: ${periodDays} dias; comparação conforme o filtro global`}
       >
-        <Icon size={13} /> {comparisonText(signal)}
+        <Icon size={13} /> {formattedChange}% em relação ao período anterior
       </span>
     );
   }
@@ -921,7 +822,6 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
   
   function OverviewView({ data }: { data: DashboardData }) {
     const accountConversion = data.sales.conversionRatePercent;
-    const paidShare = paidGrossSharePercent(data.sales);
     const unitsPerOrder = data.sales.ordersCount > 0 ? data.sales.unitsSold / data.sales.ordersCount : null;
     const previousUnitsPerOrder = data.comparison.sales && data.comparison.sales.ordersCount > 0
       ? data.comparison.sales.unitsSold / data.comparison.sales.ordersCount
@@ -952,7 +852,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Valor bruto"
             value={formatCurrency(data.sales.grossAmount)}
-            detail={paidGrossDetail(data.sales, `Resultado acumulado em ${data.periodDays} dias`)}
+            detail={`Resultado acumulado em ${data.periodDays} dias`}
             icon={CircleDollarSign}
             tone="brand"
             featured
@@ -1002,10 +902,10 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
         <section className="panel commerce-flow-panel">
           <PanelTitle
             title="Resumo comercial"
-            subtitle="Visitas, conversão, pedidos, valor vendido e valor recebido no período selecionado."
+            subtitle="Visitas, conversão, pedidos e valor bruto no período selecionado."
             action={<span className="tiny-label">{data.periodDays} dias</span>}
           />
-          <div className="commerce-flow" aria-label="Visitas, conversão, pedidos, valor vendido e valor recebido">
+          <div className="commerce-flow" aria-label="Visitas, conversão, pedidos e valor bruto">
             <div className="commerce-flow-step">
               <span className="flow-icon"><Eye size={17} /></span>
               <small>01 · Tráfego</small>
@@ -1027,18 +927,11 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
               <p>Pedidos confirmados</p>
             </div>
             <span className="flow-arrow" aria-hidden="true">→</span>
-            <div className="commerce-flow-step">
-              <span className="flow-icon"><CircleDollarSign size={17} /></span>
-              <small>04 · Vendido</small>
-              <strong>{formatCurrency(data.sales.grossAmount)}</strong>
-              <p>Valor bruto dos pedidos criados</p>
-            </div>
-            <span className="flow-arrow" aria-hidden="true">→</span>
             <div className="commerce-flow-step flow-result">
-              <span className="flow-icon"><Wallet size={17} /></span>
-              <small>05 · Recebido</small>
-              <strong>{data.sales.paidGrossAmount === null ? "Sem dados" : formatCurrency(data.sales.paidGrossAmount)}</strong>
-              <p>{paidShare === null ? "Sem dado de pagamento no período" : `${formatPercent(paidShare)} do valor vendido`}</p>
+              <span className="flow-icon"><CircleDollarSign size={17} /></span>
+              <small>04 · Resultado</small>
+              <strong>{formatCurrency(data.sales.grossAmount)}</strong>
+              <p>Valor bruto vendido</p>
             </div>
           </div>
         </section>
@@ -1150,7 +1043,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           <KpiCard
             label="Valor bruto"
             value={formatCurrency(data.sales.grossAmount)}
-            detail={paidGrossDetail(data.sales, "Período selecionado")}
+            detail="Período selecionado"
             icon={CircleDollarSign}
             tone="brand"
             comparison={{
@@ -1560,86 +1453,198 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
     );
   }
   
-  function LogisticsView({ data }: { data: DashboardData }) {
-    const { dispatch, delivery, comparisonDispatch, comparisonDelivery, economics, comparisonEconomics, fulfillment, policies, slaBreakdown, stages } = data.logistics;
+  function LogisticsView({
+    data,
+    logisticsType,
+    onLogisticsTypeChange,
+  }: {
+    data: DashboardData;
+    logisticsType: LogisticsTypeFilter;
+    onLogisticsTypeChange: (value: LogisticsTypeFilter) => void;
+  }) {
+    const {
+      punctuality,
+      operationalBacklog,
+      economics,
+      fulfillment,
+      policies,
+      slaBreakdown,
+      stages,
+      metadata,
+      reconciliation,
+    } = data.logistics;
+    const { dispatch, delivery, comparisonDispatch, comparisonDelivery } = punctuality;
+    const dispatchBacklog = operationalBacklog.dispatch;
+    const deliveryBacklog = operationalBacklog.delivery;
     const hasSlaData = slaBreakdown.length > 0;
-    const hasEconomicsData = economics.ordersCount > 0 || economics.returnShippingCost > 0;
-    const eventAverages = stages.length
-      ? buildStageEventAverages(stages)
-      : buildLogisticsEventAverages(slaBreakdown);
-    const flowStages = [...stages].sort((a, b) => a.stageOrder - b.stageOrder);
-    const comparableEvents = eventAverages.filter((event) => event.coveragePercent === null || event.coveragePercent >= 50);
-    const bottleneck = comparableEvents[0] ?? null;
-    const maxEventAverage = Math.max(...comparableEvents.map((event) => event.averageElapsedMinutes), 1);
+    const dispatchApplies = logisticsType !== "fulfillment";
+    const selectedMode = selectedLogisticsTypeLabel(logisticsType);
+    const flowStages = [...stages].sort((a, b) => {
+      const typeOrder = logisticsTypeLabel(a.logisticType).localeCompare(logisticsTypeLabel(b.logisticType), "pt-BR");
+      return typeOrder || a.stageOrder - b.stageOrder;
+    });
     const lowCoverageStages = flowStages.filter((stage) => (stage.coveragePercent ?? 0) < 50).length;
-  
+    const excludedCompleted = metadata.punctuality.currentExcludedCompleted.dispatch
+      + metadata.punctuality.currentExcludedCompleted.delivery;
+
     return (
       <>
+        <section className="panel logistics-filter-panel">
+          <div className="logistics-filter-heading">
+            <div>
+              <span className="eyebrow">Modalidade logística</span>
+              <h2>Dados de {selectedMode}</h2>
+              <p>O filtro é aplicado aos prazos, às pendências e aos tempos entre eventos.</p>
+            </div>
+            <div className="logistics-mode-tabs" role="group" aria-label="Filtrar modalidade logística">
+              {logisticsTypeOptions.map((option) => (
+                <button
+                  type="button"
+                  key={option.value}
+                  className={logisticsType === option.value ? "active" : ""}
+                  aria-pressed={logisticsType === option.value}
+                  onClick={() => onLogisticsTypeChange(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="logistics-definition-grid">
+            <div>
+              <strong>Pontualidade</strong>
+              <span>Somente envios concluídos cujo prazo foi registrado antes do evento, associados a pedidos vendidos no período.</span>
+            </div>
+            <div>
+              <strong>Pendências atuais</strong>
+              <span>Mostra todos os envios ainda abertos, mesmo quando o pedido foi feito antes do período. Não há comparação histórica.</span>
+            </div>
+            <div>
+              <strong>Tempos intermediários</strong>
+              <span>Cada tempo exige dois eventos do mesmo envio. É uma análise diagnóstica, não um funil sequencial.</span>
+            </div>
+          </div>
+          {excludedCompleted > 0 ? (
+            <p className="logistics-sample-note">
+              <AlertTriangle size={15} /> {formatNumber(excludedCompleted)} medições concluídas foram excluídas da pontualidade porque o prazo foi recuperado depois do evento.
+            </p>
+          ) : null}
+        </section>
+
         <section className="kpi-grid">
           <KpiCard
             label="Despacho no prazo"
-            value={formatTablePercent(dispatch.onTimePercent)}
-            detail={dispatch.completedCount ? `${formatNumber(dispatch.onTimeCount)} de ${formatNumber(dispatch.completedCount)} despachos concluídos` : "Nenhum despacho acompanhado desde o início foi concluído no período"}
+            value={dispatchApplies ? formatTablePercent(dispatch.onTimePercent) : "Não se aplica"}
+            detail={dispatchApplies
+              ? (dispatch.completedCount
+                ? `${formatNumber(dispatch.onTimeCount)} de ${formatNumber(dispatch.completedCount)} despachos concluídos na base válida`
+                : "Nenhum despacho com prazo acompanhado desde o início foi concluído no período")
+              : "No Full, o Mercado Livre controla a expedição; acompanhe estoque e entrega"}
             icon={PackageCheck}
             tone="good"
-            comparison={{ current: dispatch.onTimePercent, previous: comparisonDispatch?.onTimePercent ?? null, periodDays: data.periodDays }}
+            comparison={dispatchApplies
+              ? { current: dispatch.onTimePercent, previous: comparisonDispatch?.onTimePercent ?? null, periodDays: data.periodDays }
+              : undefined}
           />
           <KpiCard
             label="Entrega no prazo"
             value={formatTablePercent(delivery.onTimePercent)}
-            detail={delivery.completedCount ? `${formatNumber(delivery.onTimeCount)} de ${formatNumber(delivery.completedCount)} entregas concluídas` : "Nenhuma entrega acompanhada desde o início foi concluída no período"}
+            detail={delivery.completedCount
+              ? `${formatNumber(delivery.onTimeCount)} de ${formatNumber(delivery.completedCount)} entregas concluídas na base válida`
+              : "Nenhuma entrega com prazo acompanhado desde o início foi concluída no período"}
             icon={Truck}
             tone="brand"
             comparison={{ current: delivery.onTimePercent, previous: comparisonDelivery?.onTimePercent ?? null, periodDays: data.periodDays }}
           />
           <KpiCard
-            label="Despachos vencidos"
-            value={formatNumber(dispatch.overdueCount)}
-            detail={`${formatNumber(dispatch.pendingCount)} dentro do prazo · ${formatNumber(dispatch.cancelledCount)} cancelados`}
+            label="Despachos pendentes em atraso"
+            value={dispatchApplies ? formatNumber(dispatchBacklog.overdueCount) : "Não se aplica"}
+            detail={dispatchApplies
+              ? `${formatNumber(dispatchBacklog.pendingCount)} ainda dentro do prazo · posição atual`
+              : "A expedição do Full não é uma ação direta da PCXpress"}
             icon={AlertTriangle}
-            tone={dispatch.overdueCount ? "warning" : "good"}
-            comparison={{ current: dispatch.overdueCount, previous: comparisonDispatch?.overdueCount ?? null, periodDays: data.periodDays, direction: "lowerIsBetter" }}
+            tone={dispatchApplies && dispatchBacklog.overdueCount ? "warning" : "good"}
           />
           <KpiCard
-            label="Custo de devoluções / valor pago"
-            value={formatTablePercent(economics.returnCostOverGrossPercent)}
-            detail={hasEconomicsData ? `${formatCurrency(economics.returnShippingCost)} vinculados aos pedidos do período de origem` : "Sem custos de devolução vinculados ao período"}
-            icon={RotateCcw}
-            tone="warning"
-            comparison={{ current: economics.returnCostOverGrossPercent, previous: comparisonEconomics?.returnCostOverGrossPercent ?? null, periodDays: data.periodDays, direction: "lowerIsBetter" }}
+            label="Tempo médio até a entrega"
+            value={formatLogisticsDuration(delivery.averageElapsedMinutes, null)}
+            detail={delivery.completedCount
+              ? `Base: ${formatNumber(delivery.completedCount)} entregas concluídas com medição válida`
+              : "Sem entregas concluídas na base válida do período"}
+            icon={Gauge}
+            tone="brand"
           />
+        </section>
+
+        <section className="panel logistics-reconciliation-panel">
+          <PanelTitle
+            title="Reconciliação da base de despacho"
+            subtitle="Explica, por envio, por que o volume de preparação não é igual à base oficial do indicador de despacho."
+            action={<span className="tiny-label">{selectedMode}</span>}
+          />
+          {reconciliation.available ? (
+            <>
+              <div className="logistics-reconciliation-summary">
+                <div><span>Envios no período</span><strong>{formatNumber(reconciliation.shipmentsCount)}</strong></div>
+                <div><span>Preparação iniciada</span><strong>{formatNumber(reconciliation.preparationStartedCount)}</strong></div>
+                <div><span>Preparação concluída</span><strong>{formatNumber(reconciliation.preparationCompletedCount)}</strong></div>
+                <div className="is-result"><span>Incluídos no indicador de despacho</span><strong>{formatNumber(reconciliation.includedInDispatchKpiCount)}</strong></div>
+              </div>
+              <div className="logistics-reconciliation-reasons">
+                {reconciliation.reasons.map((reason) => (
+                  <div key={`${reason.logisticType ?? reason.modalityCode}-${reason.reasonCode}`}>
+                    <div>
+                      <strong>{reason.reason}</strong>
+                      <small>{logisticsTypeLabel(reason.logisticType ?? reason.modalityCode)}</small>
+                    </div>
+                    <span>{formatNumber(reason.shipmentsCount)}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="logistics-reconciliation-note">
+                Cada envio aparece em um único motivo. Preparação é um evento operacional; inclusão no indicador exige modalidade aplicável, prazo oficial e acompanhamento desde o início.
+              </p>
+            </>
+          ) : (
+            <p className="empty-table-message">A reconciliação detalhada ainda não está disponível nesta base.</p>
+          )}
         </section>
 
         {flowStages.length ? (
           <section className="panel logistics-stage-flow-panel">
             <PanelTitle
-              title="Etapas da entrega"
-              subtitle="Tempo médio calculado entre os eventos registrados pelo Mercado Livre."
-              action={<span className="tiny-label">{flowStages.length} etapas analisadas</span>}
+              title="Tempos entre eventos"
+              subtitle="Análise diagnóstica por modalidade. Estes blocos não representam etapas consecutivas de um mesmo funil."
+              action={<span className="tiny-label">{flowStages.length} combinações com dados</span>}
             />
             <ol className="logistics-stage-flow">
               {flowStages.map((stage) => {
                 const isLowCoverage = (stage.coveragePercent ?? 0) < 50;
-                const isSlowestComparable = bottleneck?.stageCode === stage.stageCode;
+                const centralDuration = stage.medianDurationMinutes ?? stage.averageDurationMinutes;
 
                 return (
                   <li
-                    className={`stage-flow-node${isLowCoverage ? " is-low-coverage" : ""}${isSlowestComparable ? " is-slowest" : ""}`}
-                    key={stage.stageCode}
+                    className={`stage-flow-node${isLowCoverage ? " is-low-coverage" : ""}`}
+                    key={`${stage.logisticType ?? "unknown"}-${stage.stageCode}`}
                   >
                     <div className="stage-flow-heading">
                       <span>{stage.stageOrder.toString().padStart(2, "0")}</span>
                       <small className={isLowCoverage ? "coverage-warning" : "coverage-ok"}>
-                        {isLowCoverage ? "Poucos registros" : "Boa cobertura"}
+                        {logisticsTypeLabel(stage.logisticType)}
                       </small>
                     </div>
                     <h3>{logisticsStageLabel(stage.stageCode, stage.stageName)}</h3>
-                    <p className="stage-flow-duration">{formatLogisticsDuration(stage.averageDurationMinutes, null)}</p>
-                    <div className="stage-coverage-track" aria-label={`${formatTablePercent(stage.coveragePercent)} de cobertura`}>
+                    <small className="stage-flow-metric-label">Mediana</small>
+                    <p className="stage-flow-duration">{formatLogisticsDuration(centralDuration, null)}</p>
+                    <div className="stage-flow-statistics">
+                      <span>90% em até <strong>{formatLogisticsDuration(stage.p90DurationMinutes, null)}</strong></span>
+                      <span>Base <strong>{formatNumber(stage.completedCount)} envios</strong></span>
+                    </div>
+                    <div className="stage-coverage-track" aria-label={`${formatTablePercent(stage.coveragePercent)} dos envios com os dois eventos`}>
                       <span style={{ width: `${Math.min(Math.max(stage.coveragePercent ?? 0, 0), 100)}%` }} />
                     </div>
                     <p className="stage-flow-detail">
-                      {formatNumber(stage.completedCount)} de {formatNumber(stage.startedCount)} envios · {formatTablePercent(stage.coveragePercent)} com os dois eventos
+                      {formatNumber(stage.completedCount)} de {formatNumber(stage.startedCount)} envios têm os dois eventos · {formatTablePercent(stage.coveragePercent)} da base iniciada
                     </p>
                   </li>
                 );
@@ -1647,103 +1652,54 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
             </ol>
             {lowCoverageStages ? (
               <p className="logistics-coverage-note">
-                <AlertTriangle size={15} /> {lowCoverageStages === 1 ? "Uma etapa tem" : `${lowCoverageStages} etapas têm`} menos de 50% dos eventos necessários. Esses tempos não entram na identificação da etapa mais demorada.
+                <AlertTriangle size={15} /> {lowCoverageStages === 1 ? "Uma combinação tem" : `${lowCoverageStages} combinações têm`} menos de 50% dos pares de eventos. A base pode estar incompleta ou conter envios ainda em andamento.
               </p>
             ) : null}
           </section>
         ) : null}
-  
-        <section className="content-grid two-one logistics-bottleneck-grid">
-          <article className="panel event-sla-panel">
-            <PanelTitle
-              title="Comparação dos tempos por etapa"
-              subtitle="Considera apenas etapas com pelo menos 50% dos eventos registrados."
-            />
-            {comparableEvents.length ? (
-              <div className="event-sla-bars">
-                {comparableEvents.map((event, index) => {
-                  return (
-                    <div className={`event-sla-row ${event.eventName === bottleneck?.eventName ? "is-bottleneck" : ""}`} key={event.eventName}>
-                      <div className="event-sla-label">
-                        <span>{index + 1}</span>
-                        <div>
-                          <strong>{event.eventName}</strong>
-                          <small>
-                            {formatNumber(event.completedCount)} envios concluídos · {formatTablePercent(event.coveragePercent)} de cobertura
-                            {event.targetMinutes === null ? "" : ` · ${formatTablePercent(event.onTimePercent)} dentro da meta`}
-                          </small>
-                        </div>
-                      </div>
-                      <div className="event-sla-track">
-                        <span style={{ width: `${Math.max((event.averageElapsedMinutes / maxEventAverage) * 100, 4)}%` }} />
-                      </div>
-                      <strong className="event-sla-value">{formatLogisticsDuration(event.averageElapsedMinutes, null)}</strong>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="chart-empty-state"><Activity size={18} /> Ainda não há etapas com cobertura suficiente para comparar os tempos.</div>
-            )}
-          </article>
-  
-          <article className="panel bottleneck-summary-panel">
-            <PanelTitle title="Etapa mais demorada" subtitle="Maior tempo médio entre as etapas com cobertura suficiente." />
-            {bottleneck ? (
-              <>
-                <div className="bottleneck-spotlight">
-                  <span><Gauge size={18} /> Maior tempo médio</span>
-                  <strong>{bottleneck.eventName}</strong>
-                <b>{formatLogisticsDuration(bottleneck.averageElapsedMinutes, null)}</b>
-                <small>{formatNumber(bottleneck.completedCount)} envios concluídos · {formatTablePercent(bottleneck.coveragePercent)} de cobertura</small>
-              </div>
-              <div className="bottleneck-facts">
-                <div><span>Mediana</span><strong>{formatLogisticsDuration(bottleneck.medianElapsedMinutes, null)}</strong></div>
-                <div><span>90% concluídos em até</span><strong>{formatLogisticsDuration(bottleneck.p90ElapsedMinutes, null)}</strong></div>
-                <div><span>Acima da meta</span><strong>{bottleneck.targetMinutes === null ? "—" : formatNumber(bottleneck.lateCount)}</strong></div>
-                <div><span>Em andamento</span><strong>{formatNumber(bottleneck.inProgressCount)}</strong></div>
-              </div>
-              </>
-            ) : <p className="empty-table-message">A etapa mais demorada será mostrada quando houver cobertura suficiente.</p>}
-          </article>
-        </section>
-  
+
         <section className="content-grid equal">
           <article className="panel">
-            <PanelTitle title="Envios pendentes" subtitle="Cancelamentos e entregas encerradas sem sucesso não são contados como atrasos em aberto." />
+            <PanelTitle title="Pendências atuais" subtitle="Posição operacional de hoje, sem limitar pela data do pedido e sem comparação com outro período." />
             <div className="logistics-backlog-grid">
-              <div><span>Despachos pendentes</span><strong>{formatNumber(dispatch.pendingCount)}</strong><small>{formatNumber(dispatch.overdueCount)} fora do prazo</small></div>
-              <div><span>Entregas pendentes</span><strong>{formatNumber(delivery.pendingCount)}</strong><small>{formatNumber(delivery.overdueCount)} fora do prazo</small></div>
-              <div><span>Atraso médio no despacho</span><strong>{formatLogisticsDuration(dispatch.averageBreachMinutes, dispatch.averageBreachDays)}</strong><small>Somente despachos concluídos em atraso</small></div>
-              <div><span>Atraso médio na entrega</span><strong>{formatLogisticsDuration(delivery.averageBreachMinutes, delivery.averageBreachDays)}</strong><small>Somente entregas concluídas em atraso</small></div>
+              <div><span>Despachos dentro do prazo</span><strong>{dispatchApplies ? formatNumber(dispatchBacklog.pendingCount) : "—"}</strong><small>{dispatchApplies ? "Envios ainda aguardando despacho" : "Não se aplica ao Full"}</small></div>
+              <div><span>Despachos em atraso</span><strong>{dispatchApplies ? formatNumber(dispatchBacklog.overdueCount) : "—"}</strong><small>{dispatchApplies ? "Ação direta da operação PCXpress" : "Expedição controlada pelo Mercado Livre"}</small></div>
+              <div><span>Entregas dentro do prazo</span><strong>{formatNumber(deliveryBacklog.pendingCount)}</strong><small>Envios ainda em transporte</small></div>
+              <div><span>Entregas em atraso</span><strong>{formatNumber(deliveryBacklog.overdueCount)}</strong><small>Acompanhar com a transportadora ou o Mercado Livre</small></div>
             </div>
           </article>
           <article className="panel">
-            <PanelTitle title="Devoluções e custos de frete" subtitle="O custo da devolução é vinculado à data do pedido pago." />
-            <dl className="logistics-economics-grid">
-              <div><dt>Pedidos com devolução</dt><dd>{formatNumber(economics.ordersWithReturn)}</dd></div>
-              <div><dt>Unidades devolvidas</dt><dd>{formatNumber(economics.returnedUnits)}</dd></div>
-              <div><dt>Custo das devoluções</dt><dd>{formatCurrency(economics.returnShippingCost)}</dd></div>
-              <div><dt>Frete total sobre vendas pagas</dt><dd>{formatTablePercent(economics.totalShippingCostOverGrossPercent)}</dd></div>
-            </dl>
+            <PanelTitle title="Devoluções e custos de frete" subtitle="Valores vinculados à data do pedido pago; não são uma posição atual." />
+            {metadata.economics.available ? (
+              <dl className="logistics-economics-grid">
+                <div><dt>Pedidos com devolução</dt><dd>{formatNumber(economics.ordersWithReturn)}</dd></div>
+                <div><dt>Unidades devolvidas</dt><dd>{formatNumber(economics.returnedUnits)}</dd></div>
+                <div><dt>Custo das devoluções</dt><dd>{formatCurrency(economics.returnShippingCost)}</dd></div>
+                <div><dt>Frete total sobre vendas pagas</dt><dd>{formatTablePercent(economics.totalShippingCostOverGrossPercent)}</dd></div>
+              </dl>
+            ) : (
+              <p className="empty-table-message">Os custos ainda não estão separados por modalidade. Selecione “Todas” para ver o total sem misturar o resultado ao filtro atual.</p>
+            )}
           </article>
         </section>
-  
-        <section className="content-grid equal">
-          <article className="panel">
-            <PanelTitle title="Estoque atual no Full" subtitle="Posição atual do estoque; não representa datas anteriores." />
-            {fulfillment.skuCount ? (
-              <div className="fulfillment-summary">
-                <div className="fulfillment-availability"><span style={{ width: `${fulfillment.availablePercent ?? 0}%` }} /></div>
-                <div className="fulfillment-numbers">
-                  <div><span>Disponível</span><strong>{formatNumber(fulfillment.availableQuantity)}</strong></div>
-                  <div><span>Indisponível</span><strong>{formatNumber(fulfillment.notAvailableQuantity)}</strong></div>
-                  <div><span>SKUs</span><strong>{formatNumber(fulfillment.skuCount)}</strong></div>
+
+        <section className={`content-grid ${metadata.fulfillment.included ? "equal" : "single"}`}>
+          {metadata.fulfillment.included ? (
+            <article className="panel">
+              <PanelTitle title="Estoque atual no Full" subtitle="Posição atual do estoque; não representa datas anteriores." />
+              {fulfillment.skuCount ? (
+                <div className="fulfillment-summary">
+                  <div className="fulfillment-availability"><span style={{ width: `${fulfillment.availablePercent ?? 0}%` }} /></div>
+                  <div className="fulfillment-numbers">
+                    <div><span>Disponível</span><strong>{formatNumber(fulfillment.availableQuantity)}</strong></div>
+                    <div><span>Indisponível</span><strong>{formatNumber(fulfillment.notAvailableQuantity)}</strong></div>
+                    <div><span>SKUs</span><strong>{formatNumber(fulfillment.skuCount)}</strong></div>
+                  </div>
+                  <small>{formatTablePercent(fulfillment.availablePercent)} disponível{fulfillment.syncedAt ? ` · atualizado em ${new Intl.DateTimeFormat("pt-BR").format(new Date(fulfillment.syncedAt))}` : ""}</small>
                 </div>
-                <small>{formatTablePercent(fulfillment.availablePercent)} disponível{fulfillment.syncedAt ? ` · atualizado em ${new Intl.DateTimeFormat("pt-BR").format(new Date(fulfillment.syncedAt))}` : ""}</small>
-              </div>
-            ) : <p className="empty-table-message">Não há dados de estoque do Full para esta conta.</p>}
-          </article>
+              ) : <p className="empty-table-message">Não há dados de estoque do Full para esta conta.</p>}
+            </article>
+          ) : null}
           <article className="panel">
             <PanelTitle title="Metas internas" subtitle="Prazos definidos pela operação, separados dos prazos do Mercado Livre." />
             {policies.length ? (
@@ -1759,17 +1715,17 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
             ) : <p className="empty-table-message">Nenhuma meta interna ativa foi cadastrada.</p>}
           </article>
         </section>
-  
+
         <section className="panel table-panel">
-          <PanelTitle title="Cumprimento dos prazos por modalidade" subtitle="Detalhamento por tipo de envio, origem do prazo e forma de medição." />
+          <PanelTitle title="Base de prazos por modalidade" subtitle="Detalhamento da origem do prazo e da forma de medição. Use esta tabela para conferir o espaço amostral dos indicadores." />
           {hasSlaData ? (
             <div className="table-wrap">
               <table className="logistics-sla-table">
-                <thead><tr><th>Etapa</th><th>Modalidade</th><th>Prazo de referência</th><th>Tipo de medição</th><th className="number-cell">Tempo médio</th><th className="number-cell">Concluídos</th><th className="number-cell">No prazo</th><th className="number-cell">Concluídos com atraso</th><th className="number-cell">Pendentes em atraso</th></tr></thead>
+                <thead><tr><th>Evento</th><th>Modalidade</th><th>Prazo de referência</th><th>Tipo de medição</th><th className="number-cell">Tempo médio</th><th className="number-cell">Concluídos</th><th className="number-cell">No prazo</th><th className="number-cell">Concluídos com atraso</th><th className="number-cell">Pendentes em atraso</th></tr></thead>
                 <tbody>
                   {slaBreakdown.map((row) => (
                     <tr key={`${row.eventName}-${row.logisticType}-${row.targetSource}-${row.measurementQuality}`}>
-                      <td className="primary-cell">{row.eventName}</td>
+                      <td className="primary-cell">{logisticsEventLabel(row.eventName)}</td>
                       <td>{logisticsTypeLabel(row.logisticType)}</td>
                       <td>{logisticsSourceLabel(row.targetSource)}</td>
                       <td><span className={`status-badge ${row.measurementQuality === "prospective" ? "status-good" : "status-neutral"}`}>{logisticsQualityLabel(row.measurementQuality)}</span></td>
@@ -1783,7 +1739,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
                 </tbody>
               </table>
             </div>
-          ) : <p className="empty-table-message">Ainda não há dados de prazo no período selecionado.</p>}
+          ) : <p className="empty-table-message">Não há dados de prazo no período e na modalidade selecionados.</p>}
         </section>
       </>
     );
@@ -1997,6 +1953,7 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
     const [filterError, setFilterError] = useState<string | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [refreshNonce, setRefreshNonce] = useState(0);
+    const [logisticsType, setLogisticsType] = useState<LogisticsTypeFilter>("all");
     const activeMeta = viewMeta[activeView];
     const periodDays = periodToDays(period);
     const dashboardQuery = useMemo(() => {
@@ -2014,9 +1971,11 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
           params.set("comparisonEnd", appliedFilter.comparisonEnd);
         }
       }
+
+      params.set("logisticsType", logisticsType);
   
       return params.toString();
-    }, [appliedFilter, periodDays]);
+    }, [appliedFilter, logisticsType, periodDays]);
   
     useEffect(() => {
       const controller = new AbortController();
@@ -2060,13 +2019,22 @@ function buildStageEventAverages(stages: DashboardData["logistics"]["stages"]): 
         case "traffic":
           return <TrafficView data={dashboardData} />;
         case "logistics":
-          return <LogisticsView data={dashboardData} />;
+          return (
+            <LogisticsView
+              data={dashboardData}
+              logisticsType={logisticsType}
+              onLogisticsTypeChange={(value) => {
+                setIsRefreshing(true);
+                setLogisticsType(value);
+              }}
+            />
+          );
         case "seller":
           return <SellerView data={dashboardData} />;
         default:
           return <OverviewView data={dashboardData} />;
       }
-    }, [activeView, dashboardData]);
+    }, [activeView, dashboardData, logisticsType]);
   
     function changeView(view: ViewId) {
       setActiveView(view);
