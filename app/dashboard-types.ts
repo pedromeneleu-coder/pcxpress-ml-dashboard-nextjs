@@ -230,6 +230,8 @@ export type FulfillmentInventorySummary = {
   availableQuantity: number;
   notAvailableQuantity: number;
   availablePercent: number | null;
+  inventoryCount: number;
+  /** @deprecated Use inventoryCount. Kept while older dashboard clients migrate. */
   skuCount: number;
   syncedAt: string | null;
 };
@@ -265,6 +267,29 @@ export type LogisticsStageSummary = {
 export type LogisticsMetricBase = {
   dispatch: number;
   delivery: number;
+};
+
+export type LogisticsDataHealthStatus =
+  | "healthy"
+  | "stale"
+  | "empty"
+  | "unavailable"
+  | "unknown";
+
+export type LogisticsDataHealthSource = {
+  key: "shipments" | "returns" | "fulfillment" | "reconciliation";
+  label: string;
+  status: LogisticsDataHealthStatus;
+  available: boolean;
+  hasData: boolean;
+  updatedAt: string | null;
+  message: string | null;
+};
+
+export type LogisticsDataHealth = {
+  overall: "healthy" | "attention" | "unavailable";
+  checkedAt: string;
+  sources: LogisticsDataHealthSource[];
 };
 
 export type LogisticsMetadata = {
@@ -304,6 +329,16 @@ export type LogisticsMetadata = {
     logisticsType: "fulfillment";
     included: boolean;
   };
+  availability: {
+    sla: boolean;
+    backlog: boolean;
+    economics: boolean;
+    fulfillment: boolean;
+    policies: boolean;
+    stages: boolean;
+    reconciliation: boolean;
+  };
+  dataHealth: LogisticsDataHealth;
 };
 
 export type LogisticsData = {
@@ -558,7 +593,8 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
     },
     comparisonEconomics: null,
     fulfillment: {
-      totalQuantity: 0, availableQuantity: 0, notAvailableQuantity: 0, availablePercent: null, skuCount: 0, syncedAt: null,
+      totalQuantity: 0, availableQuantity: 0, notAvailableQuantity: 0, availablePercent: null,
+      inventoryCount: 0, skuCount: 0, syncedAt: null,
     },
     policies: [],
     stages: [],
@@ -592,12 +628,63 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
       economics: {
         population: "orders_by_sale_date",
         scope: "all_modalities",
-        available: true,
+        available: false,
       },
       fulfillment: {
         population: "current_inventory",
         logisticsType: "fulfillment",
         included: true,
+      },
+      availability: {
+        sla: false,
+        backlog: false,
+        economics: false,
+        fulfillment: false,
+        policies: false,
+        stages: false,
+        reconciliation: false,
+      },
+      dataHealth: {
+        overall: "unavailable",
+        checkedAt: new Date().toISOString(),
+        sources: [
+          {
+            key: "shipments",
+            label: "Envios",
+            status: "unavailable",
+            available: false,
+            hasData: false,
+            updatedAt: null,
+            message: "Fonte de envios não consultada.",
+          },
+          {
+            key: "returns",
+            label: "Devoluções e custos",
+            status: "unavailable",
+            available: false,
+            hasData: false,
+            updatedAt: null,
+            message: "Fonte de devoluções não consultada.",
+          },
+          {
+            key: "fulfillment",
+            label: "Estoque Full",
+            status: "unavailable",
+            available: false,
+            hasData: false,
+            updatedAt: null,
+            message: "Fonte de estoque Full não consultada.",
+          },
+          {
+            key: "reconciliation",
+            label: "Reconciliação logística",
+            status: "unavailable",
+            available: false,
+            hasData: false,
+            updatedAt: null,
+            message: "Fonte de reconciliação não consultada.",
+          },
+        ],
       },
     },
   },
