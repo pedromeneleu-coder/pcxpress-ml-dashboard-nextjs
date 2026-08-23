@@ -6,6 +6,8 @@ import {
   type DailyPerformancePoint,
   type DashboardData,
   type FulfillmentInventorySummary,
+  type LogisticsDataHealth,
+  type LogisticsDataHealthSource,
   type LogisticsEconomicsSummary,
   type LogisticsOperationalBacklogSummary,
   type LogisticsReconciliation,
@@ -202,6 +204,14 @@ type LogisticsStageRecord = {
   above_target: boolean | null;
 };
 
+type LogisticsSyncRunRecord = {
+  workflow_name: string;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error_message: string | null;
+};
+
 type SupabaseConfig = {
   url: string;
   key: string;
@@ -218,6 +228,14 @@ const PUNCTUALITY_MEASUREMENT_QUALITY = "prospective";
 const BACKLOG_MEASUREMENT_QUALITIES = ["pending", "not_applicable"] as const;
 const DISPATCH_EVENT_NAMES = ["Despacho ao Mercado Livre", "Despacho ao transportador"] as const;
 const DELIVERY_EVENT_NAMES = ["Entrega ao comprador"] as const;
+// Os tres workflows logisticos sao agendados diariamente. A margem de 36 horas
+// absorve atrasos de agenda sem chamar uma execucao diaria normal de obsoleta.
+const LOGISTICS_STALE_AFTER_MS = 36 * 60 * 60 * 1000;
+const LOGISTICS_WORKFLOW_NAMES = {
+  shipments: "ml_dashboards_mvp5_shipments_sync",
+  returns: "ml_dashboards_mvp6_claims_returns_sync",
+  fulfillment: "ml_dashboards_mvp7_fulfillment_inventory_sync",
+} as const;
 const LOGISTICS_TYPE_VALUES: Record<Exclude<LogisticsTypeFilter, "all">, readonly string[]> = {
   fulfillment: ["fulfillment"],
   cross_docking: ["cross_docking"],
@@ -369,7 +387,6 @@ function fallbackForQuery(query: DashboardDateQuery, message?: string): Dashboar
   const dateSelection = resolveDateSelection(query, anchorDate);
   const selectedLogisticsType = query.logisticsType ?? "all";
   const appliedLogisticsTypes = [...logisticsTypeValues(selectedLogisticsType)];
-  const economicsAvailable = selectedLogisticsType === "all";
   const fulfillmentIncluded = selectedLogisticsType === "all" || selectedLogisticsType === "fulfillment";
 
   return {
@@ -402,12 +419,21 @@ function fallbackForQuery(query: DashboardDateQuery, message?: string): Dashboar
         },
         economics: {
           ...FALLBACK_DASHBOARD_DATA.logistics.metadata.economics,
-          scope: economicsAvailable ? "all_modalities" : "unavailable_for_selected_modality",
-          available: economicsAvailable,
+          scope: selectedLogisticsType === "all"
+            ? "all_modalities"
+            : "unavailable_for_selected_modality",
+          available: false,
         },
         fulfillment: {
           ...FALLBACK_DASHBOARD_DATA.logistics.metadata.fulfillment,
           included: fulfillmentIncluded,
+        },
+        dataHealth: {
+          ...FALLBACK_DASHBOARD_DATA.logistics.metadata.dataHealth,
+          checkedAt: new Date().toISOString(),
+          sources: FALLBACK_DASHBOARD_DATA.logistics.metadata.dataHealth.sources.map((source) => ({
+            ...source,
+          })),
         },
       },
     },
@@ -487,6 +513,177 @@ async function optionalFetchAllWithAvailability<T>(
   } catch {
     return { available: false, rows: [] };
   }
+}
+
+function validIsoTimestamp(value: string | null | undefined): string | null {
+  if (!value || !Number.isFinite(Date.parse(value))) {
+    return null;
+  }
+
+  return value;
+}
+
+function newestSyncRun(
+  records: LogisticsSyncRunRecord[],
+  workflowName: string,
+  status?: string,
+): LogisticsSyncRunRecord | null {
+  return records
+    .filter((record) => record.workflow_name === workflowName && (!status || record.status === status))
+    .sort((left, right) => {
+      const leftAt = Date.parse(left.finished_at ?? left.started_at ?? "");
+      const rightAt = Date.parse(right.finished_at ?? right.started_at ?? "");
+      return (Number.isFinite(rightAt) ? rightAt : 0) - (Number.isFinite(leftAt) ? leftAt : 0);
+    })[0] ?? null;
+}
+
+type DataHealthSourceInput = {
+  key: LogisticsDataHealthSource["key"];
+  label: string;
+  available: boolean;
+  hasData: boolean;
+  checkedAt: string;
+  workflowName: string;
+  syncRuns: OptionalFetchResult<LogisticsSyncRunRecord>;
+  fallbackUpdatedAt?: string | null;
+  unavailableComponents?: string[];
+  optionalUnavailableComponents?: string[];
+};
+
+function buildDataHealthSource(input: DataHealthSourceInput): LogisticsDataHealthSource {
+  const latestRun = newestSyncRun(input.syncRuns.rows, input.workflowName);
+  const latestSuccessfulRun = newestSyncRun(input.syncRuns.rows, input.workflowName, "success");
+  const updatedAt = validIsoTimestamp(latestSuccessfulRun?.finished_at)
+    ?? validIsoTimestamp(input.fallbackUpdatedAt);
+  const unavailableComponents = input.unavailableComponents ?? [];
+  const optionalUnavailableComponents = input.optionalUnavailableComponents ?? [];
+  const optionalWarning = optionalUnavailableComponents.length
+    ? ` Diagnósticos indisponíveis: ${optionalUnavailableComponents.join(", ")}.`
+    : "";
+
+  if (!input.available) {
+    return {
+      key: input.key,
+      label: input.label,
+      status: "unavailable",
+      available: false,
+      hasData: input.hasData,
+      updatedAt,
+      message: unavailableComponents.length
+        ? `Consulta indisponível em: ${unavailableComponents.join(", ")}.`
+        : "A fonte não pôde ser consultada.",
+    };
+  }
+
+  if (!input.hasData && latestRun && latestRun.status !== "success") {
+    return {
+      key: input.key,
+      label: input.label,
+      status: "unknown",
+      available: true,
+      hasData: false,
+      updatedAt,
+      message: latestRun.status === "running"
+        ? `A fonte ainda não tem registros e a sincronização mais recente está em execução.${optionalWarning}`
+        : `A fonte ainda não tem registros e a sincronização mais recente não terminou com sucesso.${optionalWarning}`,
+    };
+  }
+
+  if (!input.hasData) {
+    return {
+      key: input.key,
+      label: input.label,
+      status: "empty",
+      available: true,
+      hasData: false,
+      updatedAt,
+      message: `Fonte acessível, mas sem registros para o recorte consultado.${optionalWarning}`,
+    };
+  }
+
+  const updatedAtMs = updatedAt ? Date.parse(updatedAt) : Number.NaN;
+  const checkedAtMs = Date.parse(input.checkedAt);
+  const stale = Number.isFinite(updatedAtMs)
+    && Number.isFinite(checkedAtMs)
+    && checkedAtMs - updatedAtMs > LOGISTICS_STALE_AFTER_MS;
+
+  if (latestRun && latestRun.status !== "success") {
+    return {
+      key: input.key,
+      label: input.label,
+      status: stale ? "stale" : "unknown",
+      available: true,
+      hasData: true,
+      updatedAt,
+      message: latestRun.status === "running"
+        ? `A sincronização mais recente ainda está em execução; os dados representam a última carga concluída.${optionalWarning}`
+        : `A sincronização mais recente não terminou com sucesso; os dados representam a última carga concluída.${optionalWarning}`,
+    };
+  }
+
+  if (!updatedAt) {
+    return {
+      key: input.key,
+      label: input.label,
+      status: "unknown",
+      available: true,
+      hasData: true,
+      updatedAt: null,
+      message: input.syncRuns.available
+        ? `Dados disponíveis, mas sem execução concluída com timestamp confiável.${optionalWarning}`
+        : `Dados disponíveis, mas o histórico de sincronizações não pôde ser consultado.${optionalWarning}`,
+    };
+  }
+
+  if (stale) {
+    return {
+      key: input.key,
+      label: input.label,
+      status: "stale",
+      available: true,
+      hasData: true,
+      updatedAt,
+      message: `A última atualização confiável ultrapassou a janela esperada da carga diária.${optionalWarning}`,
+    };
+  }
+
+  if (optionalUnavailableComponents.length) {
+    return {
+      key: input.key,
+      label: input.label,
+      status: "unknown",
+      available: true,
+      hasData: true,
+      updatedAt,
+      message: `A fonte principal está disponível, mas há diagnósticos auxiliares indisponíveis: ${optionalUnavailableComponents.join(", ")}.`,
+    };
+  }
+
+  return {
+    key: input.key,
+    label: input.label,
+    status: "healthy",
+    available: true,
+    hasData: true,
+    updatedAt,
+    message: input.syncRuns.available
+      ? "Fonte disponível e sincronização diária concluída dentro da janela esperada."
+      : "Fonte disponível; frescor confirmado pelo timestamp persistido nos dados.",
+  };
+}
+
+function buildLogisticsDataHealth(
+  checkedAt: string,
+  sources: LogisticsDataHealthSource[],
+): LogisticsDataHealth {
+  const allUnavailable = sources.every((source) => source.status === "unavailable");
+  const allHealthy = sources.every((source) => source.status === "healthy");
+
+  return {
+    overall: allUnavailable ? "unavailable" : allHealthy ? "healthy" : "attention",
+    checkedAt,
+    sources,
+  };
 }
 
 function appendQuery(path: string, params: Record<string, string | number>): string {
@@ -1134,11 +1331,14 @@ function buildFulfillmentInventory(records: FulfillmentInventoryRecord[]): Fulfi
     { totalQuantity: 0, availableQuantity: 0, notAvailableQuantity: 0 },
   );
   const timestamps = records.map((record) => record.synced_at).filter((value): value is string => Boolean(value)).sort();
+  const inventoryCount = new Set(records.map((record) => record.inventory_id)).size;
 
   return {
     ...totals,
     availablePercent: totals.totalQuantity > 0 ? (totals.availableQuantity / totals.totalQuantity) * 100 : null,
-    skuCount: new Set(records.map((record) => record.inventory_id)).size,
+    inventoryCount,
+    // Alias temporario para clientes ainda publicados com o contrato anterior.
+    skuCount: inventoryCount,
     syncedAt: timestamps.at(-1) ?? null,
   };
 }
@@ -1320,13 +1520,14 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       sellerCurrentRecords,
       sellerSnapshotRecords,
       cancellationRecords,
-      logisticsSlaRecords,
+      logisticsSlaResult,
       logisticsReconciliationResult,
-      operationalLogisticsSlaRecords,
-      logisticsEconomicsRecords,
-      fulfillmentRecords,
-      logisticsPolicyRecords,
-      logisticsStageRecords,
+      operationalLogisticsSlaResult,
+      logisticsEconomicsResult,
+      fulfillmentResult,
+      logisticsPolicyResult,
+      logisticsStageResult,
+      logisticsSyncRunsResult,
     ] = await Promise.all([
       fetchAll<CatalogRecord>(
         config,
@@ -1384,7 +1585,7 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           order: "performance_date.asc",
         }),
       ),
-      optionalFetchAll<LogisticsSlaRecord>(
+      optionalFetchAllWithAvailability<LogisticsSlaRecord>(
         config,
         appendQuery("dashboard_daily_logistics_sla", {
           select:
@@ -1408,7 +1609,7 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           order: "sale_date.asc,reconciliation_order.asc",
         }),
       ),
-      optionalFetchAll<LogisticsSlaRecord>(
+      optionalFetchAllWithAvailability<LogisticsSlaRecord>(
         config,
         appendQuery("dashboard_daily_logistics_sla", {
           select:
@@ -1420,28 +1621,24 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           order: "sale_date.asc",
         }),
       ),
-      selectedLogisticsType === "all"
-        ? optionalFetchAll<LogisticsEconomicsRecord>(
-            config,
-            appendQuery("dashboard_daily_logistics_economics", {
-              select:
-                "sale_date,orders_count,paid_orders_count,orders_with_return,orders_with_return_cost,returned_units,paid_gross_revenue,outbound_shipping_cost,return_shipping_cost,total_shipping_cost",
-              account_id: accountFilter,
-              ...logisticsPeriodFilter,
-              order: "sale_date.asc",
-            }),
-          )
-        : Promise.resolve<LogisticsEconomicsRecord[]>([]),
-      selectedLogisticsType === "all" || selectedLogisticsType === "fulfillment"
-        ? optionalFetchAll<FulfillmentInventoryRecord>(
-            config,
-            appendQuery("dashboard_fulfillment_inventory", {
-              select: "inventory_id,total_quantity,available_quantity,not_available_quantity,synced_at",
-              account_id: accountFilter,
-            }),
-          )
-        : Promise.resolve<FulfillmentInventoryRecord[]>([]),
-      optionalFetchAll<LogisticsSlaPolicyRecord>(
+      optionalFetchAllWithAvailability<LogisticsEconomicsRecord>(
+        config,
+        appendQuery("dashboard_daily_logistics_economics", {
+          select:
+            "sale_date,orders_count,paid_orders_count,orders_with_return,orders_with_return_cost,returned_units,paid_gross_revenue,outbound_shipping_cost,return_shipping_cost,total_shipping_cost",
+          account_id: accountFilter,
+          ...logisticsPeriodFilter,
+          order: "sale_date.asc",
+        }),
+      ),
+      optionalFetchAllWithAvailability<FulfillmentInventoryRecord>(
+        config,
+        appendQuery("dashboard_fulfillment_inventory", {
+          select: "inventory_id,total_quantity,available_quantity,not_available_quantity,synced_at",
+          account_id: accountFilter,
+        }),
+      ),
+      optionalFetchAllWithAvailability<LogisticsSlaPolicyRecord>(
         config,
         appendQuery("logistics_sla_policies", {
           select: "policy_name,logistic_type,start_event_code,end_event_code,target_minutes,valid_from,valid_to",
@@ -1452,7 +1649,7 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           order: "policy_name.asc",
         }),
       ),
-      optionalFetchAll<LogisticsStageRecord>(
+      optionalFetchAllWithAvailability<LogisticsStageRecord>(
         config,
         appendQuery("dashboard_logistics_stage_times", {
           select:
@@ -1463,7 +1660,24 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           order: "sale_date.asc,stage_order.asc",
         }),
       ),
+      optionalFetchAllWithAvailability<LogisticsSyncRunRecord>(
+        config,
+        appendQuery("sync_runs", {
+          select: "workflow_name,status,started_at,finished_at,error_message",
+          account_id: accountFilter,
+          workflow_name: `in.(${Object.values(LOGISTICS_WORKFLOW_NAMES).join(",")})`,
+          order: "started_at.desc",
+          limit: 100,
+        }),
+      ),
     ]);
+
+    const logisticsSlaRecords = logisticsSlaResult.rows;
+    const operationalLogisticsSlaRecords = operationalLogisticsSlaResult.rows;
+    const logisticsEconomicsRecords = logisticsEconomicsResult.rows;
+    const fulfillmentRecords = fulfillmentResult.rows;
+    const logisticsPolicyRecords = logisticsPolicyResult.rows;
+    const logisticsStageRecords = logisticsStageResult.rows;
 
     const timestamps = catalogRecords
       .flatMap((record) => [record.synced_at, record.last_updated])
@@ -1568,6 +1782,59 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           delivery: completedOutsideProspective(previousOfficialDeliveryRecords),
         }
       : null;
+    const reconciliation = buildLogisticsReconciliation(logisticsReconciliationResult);
+    const fulfillment = buildFulfillmentInventory(fulfillmentRecords);
+    const checkedAt = new Date().toISOString();
+    const unavailableShipmentCoreComponents = [
+      !logisticsSlaResult.available ? "indicadores de SLA" : null,
+      !operationalLogisticsSlaResult.available ? "fila operacional" : null,
+    ].filter((value): value is string => Boolean(value));
+    const unavailableShipmentDiagnosticComponents = [
+      !logisticsPolicyResult.available ? "metas internas" : null,
+      !logisticsStageResult.available ? "tempos por etapa" : null,
+    ].filter((value): value is string => Boolean(value));
+    const dataHealthSources: LogisticsDataHealthSource[] = [
+      buildDataHealthSource({
+        key: "shipments",
+        label: "Envios",
+        available: unavailableShipmentCoreComponents.length === 0,
+        hasData: logisticsSlaRecords.length > 0
+          || operationalLogisticsSlaRecords.length > 0,
+        checkedAt,
+        workflowName: LOGISTICS_WORKFLOW_NAMES.shipments,
+        syncRuns: logisticsSyncRunsResult,
+        unavailableComponents: unavailableShipmentCoreComponents,
+        optionalUnavailableComponents: unavailableShipmentDiagnosticComponents,
+      }),
+      buildDataHealthSource({
+        key: "returns",
+        label: "Devoluções e custos",
+        available: logisticsEconomicsResult.available,
+        hasData: logisticsEconomicsRecords.length > 0,
+        checkedAt,
+        workflowName: LOGISTICS_WORKFLOW_NAMES.returns,
+        syncRuns: logisticsSyncRunsResult,
+      }),
+      buildDataHealthSource({
+        key: "fulfillment",
+        label: "Estoque Full",
+        available: fulfillmentResult.available,
+        hasData: fulfillmentRecords.length > 0,
+        checkedAt,
+        workflowName: LOGISTICS_WORKFLOW_NAMES.fulfillment,
+        syncRuns: logisticsSyncRunsResult,
+        fallbackUpdatedAt: fulfillment.syncedAt,
+      }),
+      buildDataHealthSource({
+        key: "reconciliation",
+        label: "Reconciliação logística",
+        available: logisticsReconciliationResult.available,
+        hasData: logisticsReconciliationResult.rows.length > 0,
+        checkedAt,
+        workflowName: LOGISTICS_WORKFLOW_NAMES.shipments,
+        syncRuns: logisticsSyncRunsResult,
+      }),
+    ];
 
     return {
       source: "supabase",
@@ -1624,7 +1891,7 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       },
       logistics: {
         selectedLogisticsType,
-        reconciliation: buildLogisticsReconciliation(logisticsReconciliationResult),
+        reconciliation,
         punctuality: {
           dispatch: dispatchPunctuality,
           delivery: deliveryPunctuality,
@@ -1646,7 +1913,7 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
         comparisonEconomics: previousLogisticsEconomicsRecords.length
           ? buildLogisticsEconomics(previousLogisticsEconomicsRecords)
           : null,
-        fulfillment: buildFulfillmentInventory(fulfillmentRecords),
+        fulfillment,
         policies: buildLogisticsPolicies(
           logisticsPolicyRecords.filter((record) => !record.valid_to || record.valid_to >= dateSelection.currentStart),
         ),
@@ -1692,13 +1959,23 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
             scope: selectedLogisticsType === "all"
               ? "all_modalities"
               : "unavailable_for_selected_modality",
-            available: selectedLogisticsType === "all",
+            available: selectedLogisticsType === "all" && logisticsEconomicsResult.available,
           },
           fulfillment: {
             population: "current_inventory",
             logisticsType: "fulfillment",
             included: selectedLogisticsType === "all" || selectedLogisticsType === "fulfillment",
           },
+          availability: {
+            sla: logisticsSlaResult.available,
+            backlog: operationalLogisticsSlaResult.available,
+            economics: logisticsEconomicsResult.available,
+            fulfillment: fulfillmentResult.available,
+            policies: logisticsPolicyResult.available,
+            stages: logisticsStageResult.available,
+            reconciliation: logisticsReconciliationResult.available,
+          },
+          dataHealth: buildLogisticsDataHealth(checkedAt, dataHealthSources),
         },
       },
     };
