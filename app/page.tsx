@@ -36,6 +36,7 @@
     type ComparisonMode,
     type DailyPerformancePoint,
     type DashboardData,
+    type LogisticsDataHealth,
     type LogisticsTypeFilter,
   } from "./dashboard-types";
   
@@ -1466,6 +1467,7 @@
       punctuality,
       operationalBacklog,
       economics,
+      comparisonEconomics,
       fulfillment,
       policies,
       slaBreakdown,
@@ -1483,264 +1485,702 @@
       const typeOrder = logisticsTypeLabel(a.logisticType).localeCompare(logisticsTypeLabel(b.logisticType), "pt-BR");
       return typeOrder || a.stageOrder - b.stageOrder;
     });
+    const operationStageCandidates = flowStages.filter((stage) => (
+      stage.logisticType !== "fulfillment"
+      && (stage.stageCode === "preparation" || stage.stageCode === "awaiting_handoff")
+    ));
+    const operationStages = operationStageCandidates.filter((stage) => (stage.coveragePercent ?? 0) >= 50);
+    const hiddenOperationStages = operationStageCandidates.length - operationStages.length;
     const lowCoverageStages = flowStages.filter((stage) => (stage.coveragePercent ?? 0) < 50).length;
     const excludedCompleted = metadata.punctuality.currentExcludedCompleted.dispatch
       + metadata.punctuality.currentExcludedCompleted.delivery;
+    const compatibleMetadata = metadata as unknown as {
+      dataHealth?: LogisticsDataHealth;
+      availability?: Partial<typeof metadata.availability>;
+    };
+    const dataHealth = compatibleMetadata.dataHealth;
+    const availability = {
+      sla: data.connected,
+      backlog: data.connected,
+      economics: data.connected,
+      fulfillment: data.connected,
+      policies: data.connected,
+      stages: data.connected,
+      reconciliation: data.connected,
+      ...compatibleMetadata.availability,
+    };
+    const healthOverall = dataHealth?.overall ?? (data.connected ? "attention" : "unavailable");
+    const healthLabels: Record<string, string> = {
+      healthy: "Dados adequados",
+      attention: "Dados exigem atenção",
+      unavailable: "Dados indisponíveis",
+    };
+    const sourceStatusLabels: Record<string, string> = {
+      healthy: "Atualizada",
+      stale: "Desatualizada",
+      empty: "Sem registros",
+      unavailable: "Indisponível",
+      unknown: "Não verificada",
+    };
+    const healthClass = healthOverall === "healthy"
+      ? "is-healthy"
+      : healthOverall === "attention"
+        ? "is-attention"
+        : "is-unavailable";
+    const formatLogisticsTimestamp = (value: string | null | undefined) => {
+      const parsed = value ? new Date(value) : null;
+      return parsed && !Number.isNaN(parsed.getTime())
+        ? new Intl.DateTimeFormat("pt-BR", {
+        dateStyle: "short",
+        timeStyle: "short",
+        }).format(parsed)
+        : "não informada";
+    };
+    const trustedSourceTimestamps = (dataHealth?.sources ?? [])
+      .filter((source) => (
+        source.available
+        && source.updatedAt
+        && source.status !== "unavailable"
+        && source.status !== "unknown"
+      ))
+      .map((source) => new Date(source.updatedAt as string))
+      .filter((date) => !Number.isNaN(date.getTime()));
+    const newestSourceTimestamp = trustedSourceTimestamps.length
+      ? new Date(Math.max(...trustedSourceTimestamps.map((date) => date.getTime()))).toISOString()
+      : null;
+    const lastSyncLabel = formatLogisticsTimestamp(newestSourceTimestamp);
+    const chainResponsibilityLabel = logisticsType === "flex"
+      ? "Responsabilidade compartilhada"
+      : logisticsType === "all"
+        ? "Cadeia e responsabilidades compartilhadas"
+        : logisticsType === "fulfillment"
+          ? "Mercado Livre"
+          : "Cadeia monitorada";
+    const fulfillmentCounts = fulfillment as typeof fulfillment & {
+      inventoryCount?: number;
+      skuCount?: number;
+    };
+    const inventoryCount = fulfillmentCounts.inventoryCount ?? fulfillmentCounts.skuCount ?? 0;
+
+    const formatEconomicComparison = (
+      current: number | null,
+      previous: number | null,
+      kind: "count" | "currency" | "percentage",
+    ) => {
+      if (current === null || previous === null) return null;
+      const delta = current - previous;
+      const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
+      const absoluteDelta = Math.abs(delta);
+      const formatted = kind === "currency"
+        ? formatCurrency(absoluteDelta)
+        : kind === "percentage"
+          ? absoluteDelta.toLocaleString("pt-BR", { maximumFractionDigits: 2 }) + " p.p."
+          : formatNumber(absoluteDelta);
+
+      return sign + formatted + " vs. período anterior";
+    };
 
     return (
       <>
-        <section className="panel logistics-filter-panel">
+        <section className="panel logistics-command-bar" aria-labelledby="logistics-filter-title">
           <div className="logistics-filter-heading">
             <div>
-              <span className="eyebrow">Modalidade logística</span>
-              <h2>Dados de {selectedMode}</h2>
-              <p>O filtro é aplicado aos prazos, às pendências e aos tempos entre eventos.</p>
+              <span className="eyebrow">Visão da operação</span>
+              <h2 id="logistics-filter-title">{selectedMode}</h2>
+              <p>Prioridades da PCXpress primeiro; desempenho da cadeia e diagnóstico aparecem em níveis separados.</p>
             </div>
-            <div className="logistics-mode-tabs" role="group" aria-label="Filtrar modalidade logística">
-              {logisticsTypeOptions.map((option) => (
-                <button
-                  type="button"
-                  key={option.value}
-                  className={logisticsType === option.value ? "active" : ""}
-                  aria-pressed={logisticsType === option.value}
-                  onClick={() => onLogisticsTypeChange(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="logistics-definition-grid">
-            <div>
-              <strong>Pontualidade</strong>
-              <span>Somente envios concluídos cujo prazo foi registrado antes do evento, associados a pedidos vendidos no período.</span>
-            </div>
-            <div>
-              <strong>Pendências atuais</strong>
-              <span>Mostra todos os envios ainda abertos, mesmo quando o pedido foi feito antes do período. Não há comparação histórica.</span>
-            </div>
-            <div>
-              <strong>Tempos intermediários</strong>
-              <span>Cada tempo exige dois eventos do mesmo envio. É uma análise diagnóstica, não um funil sequencial.</span>
-            </div>
-          </div>
-          {excludedCompleted > 0 ? (
-            <p className="logistics-sample-note">
-              <AlertTriangle size={15} /> {formatNumber(excludedCompleted)} medições concluídas foram excluídas da pontualidade porque o prazo foi recuperado depois do evento.
-            </p>
-          ) : null}
-        </section>
-
-        <section className="kpi-grid">
-          <KpiCard
-            label="Despacho no prazo"
-            value={dispatchApplies ? formatTablePercent(dispatch.onTimePercent) : "Não se aplica"}
-            detail={dispatchApplies
-              ? (dispatch.completedCount
-                ? `${formatNumber(dispatch.onTimeCount)} de ${formatNumber(dispatch.completedCount)} despachos concluídos na base válida`
-                : "Nenhum despacho com prazo acompanhado desde o início foi concluído no período")
-              : "No Full, o Mercado Livre controla a expedição; acompanhe estoque e entrega"}
-            icon={PackageCheck}
-            tone="good"
-            comparison={dispatchApplies
-              ? { current: dispatch.onTimePercent, previous: comparisonDispatch?.onTimePercent ?? null, periodDays: data.periodDays }
-              : undefined}
-          />
-          <KpiCard
-            label="Entrega no prazo"
-            value={formatTablePercent(delivery.onTimePercent)}
-            detail={delivery.completedCount
-              ? `${formatNumber(delivery.onTimeCount)} de ${formatNumber(delivery.completedCount)} entregas concluídas na base válida`
-              : "Nenhuma entrega com prazo acompanhado desde o início foi concluída no período"}
-            icon={Truck}
-            tone="brand"
-            comparison={{ current: delivery.onTimePercent, previous: comparisonDelivery?.onTimePercent ?? null, periodDays: data.periodDays }}
-          />
-          <KpiCard
-            label="Despachos pendentes em atraso"
-            value={dispatchApplies ? formatNumber(dispatchBacklog.overdueCount) : "Não se aplica"}
-            detail={dispatchApplies
-              ? `${formatNumber(dispatchBacklog.pendingCount)} ainda dentro do prazo · posição atual`
-              : "A expedição do Full não é uma ação direta da PCXpress"}
-            icon={AlertTriangle}
-            tone={dispatchApplies && dispatchBacklog.overdueCount ? "warning" : "good"}
-          />
-          <KpiCard
-            label="Tempo médio até a entrega"
-            value={formatLogisticsDuration(delivery.averageElapsedMinutes, null)}
-            detail={delivery.completedCount
-              ? `Base: ${formatNumber(delivery.completedCount)} entregas concluídas com medição válida`
-              : "Sem entregas concluídas na base válida do período"}
-            icon={Gauge}
-            tone="brand"
-          />
-        </section>
-
-        <section className="panel logistics-reconciliation-panel">
-          <PanelTitle
-            title="Reconciliação da base de despacho"
-            subtitle="Explica, por envio, por que o volume de preparação não é igual à base oficial do indicador de despacho."
-            action={<span className="tiny-label">{selectedMode}</span>}
-          />
-          {reconciliation.available ? (
-            <>
-              <div className="logistics-reconciliation-summary">
-                <div><span>Envios no período</span><strong>{formatNumber(reconciliation.shipmentsCount)}</strong></div>
-                <div><span>Preparação iniciada</span><strong>{formatNumber(reconciliation.preparationStartedCount)}</strong></div>
-                <div><span>Preparação concluída</span><strong>{formatNumber(reconciliation.preparationCompletedCount)}</strong></div>
-                <div className="is-result"><span>Incluídos no indicador de despacho</span><strong>{formatNumber(reconciliation.includedInDispatchKpiCount)}</strong></div>
-              </div>
-              <div className="logistics-reconciliation-reasons">
-                {reconciliation.reasons.map((reason) => (
-                  <div key={`${reason.logisticType ?? reason.modalityCode}-${reason.reasonCode}`}>
-                    <div>
-                      <strong>{reason.reason}</strong>
-                      <small>{logisticsTypeLabel(reason.logisticType ?? reason.modalityCode)}</small>
-                    </div>
-                    <span>{formatNumber(reason.shipmentsCount)}</span>
-                  </div>
+            <div className="logistics-command-actions">
+              <div className="logistics-mode-tabs" role="group" aria-label="Filtrar modalidade logística">
+                {logisticsTypeOptions.map((option) => (
+                  <button
+                    type="button"
+                    key={option.value}
+                    className={logisticsType === option.value ? "active" : ""}
+                    aria-pressed={logisticsType === option.value}
+                    onClick={() => onLogisticsTypeChange(option.value)}
+                  >
+                    {option.label}
+                  </button>
                 ))}
               </div>
-              <p className="logistics-reconciliation-note">
-                Cada envio aparece em um único motivo. Preparação é um evento operacional; inclusão no indicador exige modalidade aplicável, prazo oficial e acompanhamento desde o início.
-              </p>
-            </>
+              <span className="logistics-last-sync">Atualização mais recente: <strong>{lastSyncLabel}</strong></span>
+            </div>
+          </div>
+
+          <div className="logistics-data-health" role="status" aria-label={"Saúde dos dados: " + (healthLabels[healthOverall] ?? "não verificada")}>
+            <div className={"logistics-health-summary " + healthClass}>
+              <Database size={15} aria-hidden="true" />
+              <span>Saúde dos dados</span>
+              <strong>{healthLabels[healthOverall] ?? "Não verificada"}</strong>
+            </div>
+            {dataHealth?.sources.length ? (
+              <div className="logistics-health-sources" aria-label="Situação das fontes logísticas">
+                {dataHealth.sources.map((source) => (
+                  <span
+                    className={"logistics-health-source is-" + source.status}
+                    key={source.key}
+                    title={[
+                      source.message,
+                      source.updatedAt ? "Atualizada em " + formatLogisticsTimestamp(source.updatedAt) : null,
+                    ].filter(Boolean).join(" · ")}
+                  >
+                    <i aria-hidden="true" />
+                    {source.label}
+                    <small>{sourceStatusLabels[source.status] ?? "Não verificada"}</small>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="logistics-health-fallback">
+                A consolidação por fonte ainda não está disponível; consulte o diagnóstico antes de interpretar bases vazias.
+              </span>
+            )}
+          </div>
+        </section>
+
+        <section className="logistics-executive-section logistics-action-section" aria-labelledby="logistics-action-title">
+          <header className="logistics-section-heading">
+            <div>
+              <span className="eyebrow">Prioridades de hoje</span>
+              <h2 id="logistics-action-title">Ação PCXpress</h2>
+              <p>Posição operacional completa dos envios abertos, sem limitar pela data em que o pedido foi vendido.</p>
+            </div>
+            <span className="logistics-scope-badge">Agora</span>
+          </header>
+
+          {dispatchApplies && availability.backlog ? (
+            <div className="logistics-priority-grid">
+              <article className={"logistics-priority-card " + (dispatchBacklog.overdueCount > 0 ? "is-critical" : "is-clear")}>
+                <div className="logistics-priority-card-heading">
+                  <span className="logistics-priority-icon" aria-hidden="true"><AlertTriangle size={20} /></span>
+                  <div>
+                    <h3>Despachos vencidos</h3>
+                    <small>Agir primeiro</small>
+                  </div>
+                </div>
+                <strong>{formatNumber(dispatchBacklog.overdueCount)}</strong>
+                <p>
+                  {dispatchBacklog.overdueCount > 0
+                    ? "Envios que já ultrapassaram o prazo de despacho e exigem atuação direta da operação."
+                    : "Nenhum envio aberto ultrapassou o prazo de despacho nesta sincronização."}
+                </p>
+                <span className="logistics-responsibility-label">Responsabilidade PCXpress</span>
+              </article>
+
+              <article className="logistics-priority-card is-waiting">
+                <div className="logistics-priority-card-heading">
+                  <span className="logistics-priority-icon" aria-hidden="true"><PackageCheck size={20} /></span>
+                  <div>
+                    <h3>Aguardando despacho</h3>
+                    <small>Ainda dentro do prazo</small>
+                  </div>
+                </div>
+                <strong>{formatNumber(dispatchBacklog.pendingCount)}</strong>
+                <p>Envios que precisam ser preparados e entregues à coleta ou postagem antes de vencer.</p>
+                <span className="logistics-responsibility-label">Monitorar a fila hoje</span>
+              </article>
+            </div>
           ) : (
-            <p className="empty-table-message">A reconciliação detalhada ainda não está disponível nesta base.</p>
+            <div className="logistics-applicability-note">
+              {dispatchApplies ? <AlertTriangle size={22} aria-hidden="true" /> : <Box size={22} aria-hidden="true" />}
+              <div>
+                <strong>{dispatchApplies ? "Dados de backlog indisponíveis" : "Expedição controlada pelo Mercado Livre"}</strong>
+                <p>
+                  {dispatchApplies
+                    ? "A consulta da fila operacional falhou. Os valores não foram convertidos em zero; verifique a fonte de envios."
+                    : "Na modalidade Full, despacho do seller não se aplica à PCXpress. Acompanhe entrega e disponibilidade do estoque abaixo."}
+                </p>
+              </div>
+            </div>
           )}
         </section>
 
-        {flowStages.length ? (
-          <section className="panel logistics-stage-flow-panel">
-            <PanelTitle
-              title="Tempos entre eventos"
-              subtitle="Análise diagnóstica por modalidade. Estes blocos não representam etapas consecutivas de um mesmo funil."
-              action={<span className="tiny-label">{flowStages.length} combinações com dados</span>}
-            />
-            <ol className="logistics-stage-flow">
-              {flowStages.map((stage) => {
-                const isLowCoverage = (stage.coveragePercent ?? 0) < 50;
-                const centralDuration = stage.medianDurationMinutes ?? stage.averageDurationMinutes;
+        <section className="logistics-executive-section" aria-labelledby="logistics-operation-title">
+          <header className="logistics-section-heading">
+            <div>
+              <span className="eyebrow">Resultado histórico</span>
+              <h2 id="logistics-operation-title">Operação PCXpress</h2>
+              <p>Pedidos vendidos no período selecionado, com base e responsabilidade explicitadas.</p>
+            </div>
+            <span className="logistics-scope-badge">{data.periodDays} dias</span>
+          </header>
 
-                return (
-                  <li
-                    className={`stage-flow-node${isLowCoverage ? " is-low-coverage" : ""}`}
-                    key={`${stage.logisticType ?? "unknown"}-${stage.stageCode}`}
-                  >
-                    <div className="stage-flow-heading">
-                      <span>{stage.stageOrder.toString().padStart(2, "0")}</span>
-                      <small className={isLowCoverage ? "coverage-warning" : "coverage-ok"}>
-                        {logisticsTypeLabel(stage.logisticType)}
+          {dispatchApplies && availability.sla ? (
+            <>
+              <div className="logistics-operation-kpis">
+                <KpiCard
+                  label="Despacho no prazo"
+                  value={formatTablePercent(dispatch.onTimePercent)}
+                  detail={dispatch.completedCount
+                    ? formatNumber(dispatch.onTimeCount) + " de " + formatNumber(dispatch.completedCount) + " despachos concluídos na base válida"
+                    : "Nenhum despacho concluído com prazo acompanhado desde o início"}
+                  icon={PackageCheck}
+                  tone="good"
+                  comparison={{
+                    current: dispatch.onTimePercent,
+                    previous: comparisonDispatch?.onTimePercent ?? null,
+                    periodDays: data.periodDays,
+                  }}
+                />
+                <KpiCard
+                  label="Concluídos com atraso"
+                  value={formatNumber(dispatch.lateCount)}
+                  detail={dispatch.completedCount
+                    ? "Base: " + formatNumber(dispatch.completedCount) + " despachos concluídos com medição válida"
+                    : "Sem despachos concluídos na base válida do período"}
+                  icon={AlertTriangle}
+                  tone={dispatch.lateCount > 0 ? "warning" : "good"}
+                />
+              </div>
+
+              {!availability.stages ? (
+                <p className="logistics-inline-note">
+                  <AlertTriangle size={15} aria-hidden="true" />
+                  Dados de preparação e handoff indisponíveis nesta consulta.
+                </p>
+              ) : operationStages.length ? (
+                <article className="panel logistics-executive-stages">
+                  <PanelTitle
+                    title="Ritmo antes do handoff"
+                    subtitle="Somente etapas com ao menos 50% de cobertura aparecem no resumo executivo."
+                    action={<span className="tiny-label">{operationStages.length} medições confiáveis</span>}
+                  />
+                  <div className="logistics-executive-stage-grid">
+                    {operationStages.map((stage) => (
+                      <div key={[stage.logisticType ?? "unknown", stage.stageCode].join("-")}>
+                        <span>{logisticsStageLabel(stage.stageCode, stage.stageName)}</span>
+                        <strong>{formatLogisticsDuration(stage.medianDurationMinutes, null)}</strong>
+                        <small>
+                          {logisticsTypeLabel(stage.logisticType)}
+                          {" · Base " + formatNumber(stage.completedCount)}
+                          {" · Cobertura " + formatTablePercent(stage.coveragePercent)}
+                        </small>
+                        {stage.targetMinutes !== null ? (
+                          <p>
+                            Meta {formatLogisticsDuration(stage.targetMinutes, null)}
+                            {" · " + formatNumber(stage.aboveTargetCount) + " acima da meta"}
+                          </p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              ) : (
+                <p className="logistics-inline-note">
+                  <AlertTriangle size={15} aria-hidden="true" />
+                  Preparação e espera pelo handoff ainda não têm cobertura mínima de 50% para subir ao resumo executivo.
+                </p>
+              )}
+
+              {availability.stages && hiddenOperationStages > 0 && operationStages.length ? (
+                <p className="logistics-inline-note is-muted">
+                  <Database size={15} aria-hidden="true" />
+                  {hiddenOperationStages === 1
+                    ? "Uma medição de etapa ficou apenas no diagnóstico por cobertura abaixo de 50%."
+                    : formatNumber(hiddenOperationStages) + " medições de etapa ficaram apenas no diagnóstico por cobertura abaixo de 50%."}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <div className="logistics-applicability-note is-compact">
+              {dispatchApplies ? <AlertTriangle size={20} aria-hidden="true" /> : <PackageCheck size={20} aria-hidden="true" />}
+              <div>
+                <strong>{dispatchApplies ? "Dados de SLA indisponíveis" : "Indicador de despacho do seller não aplicável"}</strong>
+                <p>
+                  {dispatchApplies
+                    ? "A consulta de pontualidade falhou; nenhum zero foi exibido como resultado operacional."
+                    : "O Full permanece fora do resultado operacional de expedição da PCXpress."}
+                </p>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="logistics-executive-section" aria-labelledby="logistics-chain-title">
+          <header className="logistics-section-heading">
+            <div>
+              <span className="eyebrow">Depois do handoff</span>
+              <h2 id="logistics-chain-title">Cadeia monitorada</h2>
+              <p>Indicadores acompanhados após o handoff; no Flex, a última milha é tratada como responsabilidade compartilhada.</p>
+            </div>
+            <span className="logistics-scope-badge is-shared">{chainResponsibilityLabel}</span>
+          </header>
+
+          <div className="logistics-chain-kpis">
+            <KpiCard
+              label="Entrega no prazo"
+              value={availability.sla ? formatTablePercent(delivery.onTimePercent) : "Dados indisponíveis"}
+              detail={availability.sla
+                ? (delivery.completedCount
+                  ? formatNumber(delivery.onTimeCount) + " de " + formatNumber(delivery.completedCount) + " entregas concluídas na base válida"
+                  : "Nenhuma entrega concluída com prazo acompanhado desde o início")
+                : "A consulta de pontualidade falhou nesta atualização."}
+              icon={Truck}
+              tone={availability.sla ? "brand" : "neutral"}
+              comparison={availability.sla ? {
+                current: delivery.onTimePercent,
+                previous: comparisonDelivery?.onTimePercent ?? null,
+                periodDays: data.periodDays,
+              } : undefined}
+            />
+            <KpiCard
+              label="Entregas vencidas"
+              value={availability.backlog ? formatNumber(deliveryBacklog.overdueCount) : "Dados indisponíveis"}
+              detail={availability.backlog
+                ? "Posição atual dos envios em transporte que ultrapassaram a promessa."
+                : "A consulta da fila de entregas falhou nesta atualização."}
+              icon={AlertTriangle}
+              tone={!availability.backlog ? "neutral" : deliveryBacklog.overdueCount > 0 ? "warning" : "good"}
+            />
+            <KpiCard
+              label="Dentro da promessa"
+              value={availability.backlog ? formatNumber(deliveryBacklog.pendingCount) : "Dados indisponíveis"}
+              detail={availability.backlog
+                ? "Envios em transporte ainda dentro do prazo informado ao comprador."
+                : "A consulta da fila de entregas falhou nesta atualização."}
+              icon={CheckCircle2}
+              tone="neutral"
+            />
+            <KpiCard
+              label="Concluídas com atraso"
+              value={availability.sla ? formatNumber(delivery.lateCount) : "Dados indisponíveis"}
+              detail={availability.sla
+                ? (delivery.completedCount
+                  ? "Base: " + formatNumber(delivery.completedCount) + " entregas concluídas com medição válida"
+                  : "Sem entregas concluídas na base válida do período")
+                : "A consulta de pontualidade falhou nesta atualização."}
+              icon={Gauge}
+              tone={!availability.sla ? "neutral" : delivery.lateCount > 0 ? "warning" : "good"}
+            />
+          </div>
+        </section>
+
+        <section className="logistics-executive-section" aria-labelledby="logistics-impact-title">
+          <header className="logistics-section-heading">
+            <div>
+              <span className="eyebrow">Impacto</span>
+              <h2 id="logistics-impact-title">Frete, devoluções e Full</h2>
+              <p>Consequências econômicas do período e posição atual do estoque sob operação do Mercado Livre.</p>
+            </div>
+          </header>
+
+          <div className={"logistics-impact-grid " + (metadata.fulfillment.included ? "" : "is-single")}>
+            <article className="panel">
+              <PanelTitle
+                title="Frete e devoluções"
+                subtitle="Valores vinculados à data do pedido pago."
+                action={!availability.economics
+                  ? <span className="status-badge status-neutral">Fonte indisponível</span>
+                  : !metadata.economics.available
+                    ? <span className="status-badge status-warning">Todas as modalidades</span>
+                    : undefined}
+              />
+              {!availability.economics ? (
+                <p className="empty-table-message">
+                  Dados indisponíveis: a consulta de pedidos, fretes e devoluções falhou nesta atualização. Nenhum valor foi tratado como zero.
+                </p>
+              ) : metadata.economics.available ? (
+                <dl className="logistics-economics-grid">
+                  <div>
+                    <dt>Pedidos com devolução</dt>
+                    <dd>{formatNumber(economics.ordersWithReturn)}</dd>
+                    {comparisonEconomics ? <small>{formatEconomicComparison(economics.ordersWithReturn, comparisonEconomics.ordersWithReturn, "count")}</small> : null}
+                  </div>
+                  <div>
+                    <dt>Unidades devolvidas</dt>
+                    <dd>{formatNumber(economics.returnedUnits)}</dd>
+                    {comparisonEconomics ? <small>{formatEconomicComparison(economics.returnedUnits, comparisonEconomics.returnedUnits, "count")}</small> : null}
+                  </div>
+                  <div>
+                    <dt>Custo das devoluções</dt>
+                    <dd>{formatCurrency(economics.returnShippingCost)}</dd>
+                    {comparisonEconomics ? <small>{formatEconomicComparison(economics.returnShippingCost, comparisonEconomics.returnShippingCost, "currency")}</small> : null}
+                  </div>
+                  <div>
+                    <dt>Frete total sobre vendas pagas</dt>
+                    <dd>{formatTablePercent(economics.totalShippingCostOverGrossPercent)}</dd>
+                    {comparisonEconomics ? <small>{formatEconomicComparison(economics.totalShippingCostOverGrossPercent, comparisonEconomics.totalShippingCostOverGrossPercent, "percentage")}</small> : null}
+                  </div>
+                </dl>
+              ) : (
+                <p className="empty-table-message">
+                  Os custos ainda não estão separados por modalidade. Selecione “Todas” para ver o total sem atribuí-lo incorretamente ao filtro atual.
+                </p>
+              )}
+            </article>
+
+            {metadata.fulfillment.included ? (
+              <article className="panel logistics-full-panel">
+                <PanelTitle title="Estoque atual no Full" subtitle="Posição atual; não representa datas anteriores." />
+                {!availability.fulfillment ? (
+                  <p className="empty-table-message">
+                    Dados indisponíveis: a consulta de inventário Full falhou nesta atualização. Nenhum saldo foi tratado como zero.
+                  </p>
+                ) : inventoryCount > 0 || fulfillment.totalQuantity > 0 ? (
+                  <div className="fulfillment-summary">
+                    <div
+                      className="fulfillment-availability"
+                      role="img"
+                      aria-label={formatTablePercent(fulfillment.availablePercent) + " do estoque Full disponível"}
+                    >
+                      <span style={{ width: Math.min(Math.max(fulfillment.availablePercent ?? 0, 0), 100) + "%" }} />
+                    </div>
+                    <div className="fulfillment-highlight">
+                      <strong>{formatTablePercent(fulfillment.availablePercent)}</strong>
+                      <span>do estoque disponível</span>
+                    </div>
+                    <div className="fulfillment-numbers">
+                      <div><span>Disponível</span><strong>{formatNumber(fulfillment.availableQuantity)}</strong></div>
+                      <div><span>Indisponível</span><strong>{formatNumber(fulfillment.notAvailableQuantity)}</strong></div>
+                      <div><span>Inventários no Full</span><strong>{formatNumber(inventoryCount)}</strong></div>
+                    </div>
+                    <small>
+                      {fulfillment.syncedAt
+                        ? "Última sincronização: " + formatLogisticsTimestamp(fulfillment.syncedAt)
+                        : "Última sincronização não informada"}
+                    </small>
+                  </div>
+                ) : (
+                  <p className="empty-table-message">Não há dados de estoque do Full para esta conta.</p>
+                )}
+              </article>
+            ) : null}
+          </div>
+        </section>
+
+        <details className="panel logistics-diagnostics">
+          <summary>
+            <span className="logistics-diagnostics-icon" aria-hidden="true"><Database size={19} /></span>
+            <span>
+              <strong>Ver bases, reconciliação e diagnóstico técnico</strong>
+              <small>Cobertura por fonte, etapas completas, metas internas e composição dos indicadores de SLA.</small>
+            </span>
+            <ChevronDown size={18} aria-hidden="true" />
+          </summary>
+
+          <div className="logistics-diagnostics-content">
+            <section className="logistics-diagnostic-block" aria-labelledby="logistics-health-detail-title">
+              <div className="logistics-diagnostic-heading">
+                <div>
+                  <h3 id="logistics-health-detail-title">Saúde das fontes</h3>
+                  <p>Uma base vazia ou indisponível nunca deve ser interpretada como zero operacional.</p>
+                </div>
+                <span className={"logistics-health-detail-status " + healthClass}>{healthLabels[healthOverall] ?? "Não verificada"}</span>
+              </div>
+              {dataHealth?.sources.length ? (
+                <div className="logistics-health-detail-grid">
+                  {dataHealth.sources.map((source) => (
+                    <div key={source.key}>
+                      <span className={"logistics-source-status is-" + source.status}>
+                        <i aria-hidden="true" />
+                        {sourceStatusLabels[source.status] ?? "Não verificada"}
+                      </span>
+                      <strong>{source.label}</strong>
+                      <small>
+                        {source.message
+                          ?? (source.updatedAt
+                            ? "Atualizada em " + formatLogisticsTimestamp(source.updatedAt)
+                            : "Sem horário de atualização")}
                       </small>
                     </div>
-                    <h3>{logisticsStageLabel(stage.stageCode, stage.stageName)}</h3>
-                    <small className="stage-flow-metric-label">Mediana</small>
-                    <p className="stage-flow-duration">{formatLogisticsDuration(centralDuration, null)}</p>
-                    <div className="stage-flow-statistics">
-                      <span>90% em até <strong>{formatLogisticsDuration(stage.p90DurationMinutes, null)}</strong></span>
-                      <span>Base <strong>{formatNumber(stage.completedCount)} envios</strong></span>
-                    </div>
-                    <div className="stage-coverage-track" aria-label={`${formatTablePercent(stage.coveragePercent)} dos envios com os dois eventos`}>
-                      <span style={{ width: `${Math.min(Math.max(stage.coveragePercent ?? 0, 0), 100)}%` }} />
-                    </div>
-                    <p className="stage-flow-detail">
-                      {formatNumber(stage.completedCount)} de {formatNumber(stage.startedCount)} envios têm os dois eventos · {formatTablePercent(stage.coveragePercent)} da base iniciada
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-table-message">A verificação detalhada por fonte ainda não está disponível.</p>
+              )}
+            </section>
+
+            <section className="logistics-diagnostic-block" aria-labelledby="logistics-reconciliation-title">
+              <div className="logistics-diagnostic-heading">
+                <div>
+                  <h3 id="logistics-reconciliation-title">Reconciliação da base de despacho</h3>
+                  <p>Explica por que o volume de preparação não é igual à base oficial do indicador.</p>
+                </div>
+                <span className="tiny-label">{selectedMode}</span>
+              </div>
+              {!availability.reconciliation ? (
+                <p className="empty-table-message">
+                  Dados indisponíveis: a consulta de reconciliação falhou nesta atualização.
+                </p>
+              ) : reconciliation.available ? (
+                <>
+                  <div className="logistics-reconciliation-summary">
+                    <div><span>Envios no período</span><strong>{formatNumber(reconciliation.shipmentsCount)}</strong></div>
+                    <div><span>Preparação iniciada</span><strong>{formatNumber(reconciliation.preparationStartedCount)}</strong></div>
+                    <div><span>Preparação concluída</span><strong>{formatNumber(reconciliation.preparationCompletedCount)}</strong></div>
+                    <div className="is-result"><span>Incluídos no indicador de despacho</span><strong>{formatNumber(reconciliation.includedInDispatchKpiCount)}</strong></div>
+                  </div>
+                  <div className="logistics-reconciliation-reasons">
+                    {reconciliation.reasons.map((reason) => (
+                      <div key={[reason.logisticType ?? reason.modalityCode, reason.reasonCode].join("-")}>
+                        <div>
+                          <strong>{reason.reason}</strong>
+                          <small>{logisticsTypeLabel(reason.logisticType ?? reason.modalityCode)}</small>
+                        </div>
+                        <span>{formatNumber(reason.shipmentsCount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="logistics-reconciliation-note">
+                    Cada envio aparece em um único motivo. A inclusão exige modalidade aplicável, prazo oficial e acompanhamento desde o início.
+                  </p>
+                </>
+              ) : (
+                <p className="empty-table-message">A reconciliação detalhada ainda não está disponível nesta base.</p>
+              )}
+            </section>
+
+            <section className="logistics-diagnostic-block" aria-labelledby="logistics-stages-title">
+              <div className="logistics-diagnostic-heading">
+                <div>
+                  <h3 id="logistics-stages-title">Tempos entre eventos</h3>
+                  <p>Análise diagnóstica por modalidade; os blocos não formam um funil sequencial.</p>
+                </div>
+                <span className="tiny-label">{availability.stages ? flowStages.length + " combinações" : "Fonte indisponível"}</span>
+              </div>
+              {!availability.stages ? (
+                <p className="empty-table-message">
+                  Dados indisponíveis: a consulta dos pares de eventos falhou nesta atualização.
+                </p>
+              ) : flowStages.length ? (
+                <>
+                  <ol className="logistics-stage-flow">
+                    {flowStages.map((stage) => {
+                      const isLowCoverage = (stage.coveragePercent ?? 0) < 50;
+                      return (
+                        <li
+                          className={"stage-flow-node" + (isLowCoverage ? " is-low-coverage" : "")}
+                          key={[stage.logisticType ?? "unknown", stage.stageCode].join("-")}
+                        >
+                          <div className="stage-flow-heading">
+                            <span>{stage.stageOrder.toString().padStart(2, "0")}</span>
+                            <small className={isLowCoverage ? "coverage-warning" : "coverage-ok"}>
+                              {logisticsTypeLabel(stage.logisticType)}
+                            </small>
+                          </div>
+                          <h3>{logisticsStageLabel(stage.stageCode, stage.stageName)}</h3>
+                          <small className="stage-flow-metric-label">Mediana</small>
+                          <p className="stage-flow-duration">{formatLogisticsDuration(stage.medianDurationMinutes, null)}</p>
+                          <div className="stage-flow-statistics">
+                            <span>90% em até <strong>{formatLogisticsDuration(stage.p90DurationMinutes, null)}</strong></span>
+                            <span>Base <strong>{formatNumber(stage.completedCount)} envios</strong></span>
+                          </div>
+                          <div className="stage-coverage-track" aria-label={formatTablePercent(stage.coveragePercent) + " dos envios com os dois eventos"}>
+                            <span style={{ width: Math.min(Math.max(stage.coveragePercent ?? 0, 0), 100) + "%" }} />
+                          </div>
+                          <p className="stage-flow-detail">
+                            {formatNumber(stage.completedCount)} de {formatNumber(stage.startedCount)} envios têm os dois eventos
+                            {" · " + formatTablePercent(stage.coveragePercent) + " da base iniciada"}
+                          </p>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                  {lowCoverageStages ? (
+                    <p className="logistics-coverage-note">
+                      <AlertTriangle size={15} aria-hidden="true" />
+                      {lowCoverageStages === 1
+                        ? "Uma combinação tem menos de 50% dos pares de eventos."
+                        : formatNumber(lowCoverageStages) + " combinações têm menos de 50% dos pares de eventos."}
+                      {" A base pode estar incompleta ou conter envios em andamento."}
                     </p>
-                  </li>
-                );
-              })}
-            </ol>
-            {lowCoverageStages ? (
-              <p className="logistics-coverage-note">
-                <AlertTriangle size={15} /> {lowCoverageStages === 1 ? "Uma combinação tem" : `${lowCoverageStages} combinações têm`} menos de 50% dos pares de eventos. A base pode estar incompleta ou conter envios ainda em andamento.
+                  ) : null}
+                </>
+              ) : (
+                <p className="empty-table-message">Não há pares de eventos disponíveis para a modalidade e o período selecionados.</p>
+              )}
+            </section>
+
+            <section className="logistics-diagnostic-block" aria-labelledby="logistics-policies-title">
+              <div className="logistics-diagnostic-heading">
+                <div>
+                  <h3 id="logistics-policies-title">Metas internas</h3>
+                  <p>Prazos definidos pela operação, mantidos separados dos prazos oficiais do Mercado Livre.</p>
+                </div>
+              </div>
+              {!availability.policies ? (
+                <p className="empty-table-message">
+                  Dados indisponíveis: a consulta das metas internas falhou nesta atualização.
+                </p>
+              ) : policies.length ? (
+                <div className="logistics-policies">
+                  {policies.map((policy) => (
+                    <div key={[policy.name, policy.logisticType ?? "all"].join("-")}>
+                      <span>{policy.name}</span>
+                      <strong>{formatLogisticsDuration(policy.targetMinutes, null)}</strong>
+                      <small>
+                        {policy.logisticType ? logisticsTypeLabel(policy.logisticType) : "Todas as modalidades"}
+                        {" · " + logisticsEventLabel(policy.startEventCode) + " → " + logisticsEventLabel(policy.endEventCode)}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-table-message">Nenhuma meta interna ativa foi cadastrada.</p>
+              )}
+            </section>
+
+            <section className="logistics-diagnostic-block" aria-labelledby="logistics-sla-title">
+              <div className="logistics-diagnostic-heading">
+                <div>
+                  <h3 id="logistics-sla-title">Base de prazos por modalidade</h3>
+                  <p>Origem do prazo, tipo de medição e espaço amostral dos indicadores.</p>
+                </div>
+              </div>
+              {!availability.sla ? (
+                <p className="empty-table-message">
+                  Dados indisponíveis: a consulta da base de SLA falhou nesta atualização.
+                </p>
+              ) : hasSlaData ? (
+                <div className="table-wrap">
+                  <table className="logistics-sla-table">
+                    <thead>
+                      <tr>
+                        <th>Evento</th>
+                        <th>Modalidade</th>
+                        <th>Prazo de referência</th>
+                        <th>Tipo de medição</th>
+                        <th className="number-cell">Tempo médio</th>
+                        <th className="number-cell">Concluídos</th>
+                        <th className="number-cell">No prazo</th>
+                        <th className="number-cell">Concluídos com atraso</th>
+                        <th className="number-cell">Pendentes em atraso</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {slaBreakdown.map((row) => (
+                        <tr key={[row.eventName, row.logisticType ?? "unknown", row.targetSource, row.measurementQuality].join("-")}>
+                          <td className="primary-cell">{logisticsEventLabel(row.eventName)}</td>
+                          <td>{logisticsTypeLabel(row.logisticType)}</td>
+                          <td>{logisticsSourceLabel(row.targetSource)}</td>
+                          <td>
+                            <span className={"status-badge " + (row.measurementQuality === "prospective" ? "status-good" : "status-neutral")}>
+                              {logisticsQualityLabel(row.measurementQuality)}
+                            </span>
+                          </td>
+                          <td className="number-cell primary-cell">{formatLogisticsDuration(row.averageElapsedMinutes, null)}</td>
+                          <td className="number-cell">{formatNumber(row.completedCount)}</td>
+                          <td className="number-cell">{formatTablePercent(row.onTimePercent)}</td>
+                          <td className="number-cell">{formatNumber(row.lateCount)}</td>
+                          <td className="number-cell">{formatNumber(row.overdueCount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="empty-table-message">Não há dados de prazo no período e na modalidade selecionados.</p>
+              )}
+            </section>
+
+            {availability.sla && excludedCompleted > 0 ? (
+              <p className="logistics-sample-note">
+                <AlertTriangle size={15} aria-hidden="true" />
+                {formatNumber(excludedCompleted)} medições concluídas foram excluídas da pontualidade porque o prazo foi recuperado depois do evento.
               </p>
             ) : null}
-          </section>
-        ) : null}
-
-        <section className="content-grid equal">
-          <article className="panel">
-            <PanelTitle title="Pendências atuais" subtitle="Posição operacional de hoje, sem limitar pela data do pedido e sem comparação com outro período." />
-            <div className="logistics-backlog-grid">
-              <div><span>Despachos dentro do prazo</span><strong>{dispatchApplies ? formatNumber(dispatchBacklog.pendingCount) : "—"}</strong><small>{dispatchApplies ? "Envios ainda aguardando despacho" : "Não se aplica ao Full"}</small></div>
-              <div><span>Despachos em atraso</span><strong>{dispatchApplies ? formatNumber(dispatchBacklog.overdueCount) : "—"}</strong><small>{dispatchApplies ? "Ação direta da operação PCXpress" : "Expedição controlada pelo Mercado Livre"}</small></div>
-              <div><span>Entregas dentro do prazo</span><strong>{formatNumber(deliveryBacklog.pendingCount)}</strong><small>Envios ainda em transporte</small></div>
-              <div><span>Entregas em atraso</span><strong>{formatNumber(deliveryBacklog.overdueCount)}</strong><small>Acompanhar com a transportadora ou o Mercado Livre</small></div>
-            </div>
-          </article>
-          <article className="panel">
-            <PanelTitle title="Devoluções e custos de frete" subtitle="Valores vinculados à data do pedido pago; não são uma posição atual." />
-            {metadata.economics.available ? (
-              <dl className="logistics-economics-grid">
-                <div><dt>Pedidos com devolução</dt><dd>{formatNumber(economics.ordersWithReturn)}</dd></div>
-                <div><dt>Unidades devolvidas</dt><dd>{formatNumber(economics.returnedUnits)}</dd></div>
-                <div><dt>Custo das devoluções</dt><dd>{formatCurrency(economics.returnShippingCost)}</dd></div>
-                <div><dt>Frete total sobre vendas pagas</dt><dd>{formatTablePercent(economics.totalShippingCostOverGrossPercent)}</dd></div>
-              </dl>
-            ) : (
-              <p className="empty-table-message">Os custos ainda não estão separados por modalidade. Selecione “Todas” para ver o total sem misturar o resultado ao filtro atual.</p>
-            )}
-          </article>
-        </section>
-
-        <section className={`content-grid ${metadata.fulfillment.included ? "equal" : "single"}`}>
-          {metadata.fulfillment.included ? (
-            <article className="panel">
-              <PanelTitle title="Estoque atual no Full" subtitle="Posição atual do estoque; não representa datas anteriores." />
-              {fulfillment.skuCount ? (
-                <div className="fulfillment-summary">
-                  <div className="fulfillment-availability"><span style={{ width: `${fulfillment.availablePercent ?? 0}%` }} /></div>
-                  <div className="fulfillment-numbers">
-                    <div><span>Disponível</span><strong>{formatNumber(fulfillment.availableQuantity)}</strong></div>
-                    <div><span>Indisponível</span><strong>{formatNumber(fulfillment.notAvailableQuantity)}</strong></div>
-                    <div><span>SKUs</span><strong>{formatNumber(fulfillment.skuCount)}</strong></div>
-                  </div>
-                  <small>{formatTablePercent(fulfillment.availablePercent)} disponível{fulfillment.syncedAt ? ` · atualizado em ${new Intl.DateTimeFormat("pt-BR").format(new Date(fulfillment.syncedAt))}` : ""}</small>
-                </div>
-              ) : <p className="empty-table-message">Não há dados de estoque do Full para esta conta.</p>}
-            </article>
-          ) : null}
-          <article className="panel">
-            <PanelTitle title="Metas internas" subtitle="Prazos definidos pela operação, separados dos prazos do Mercado Livre." />
-            {policies.length ? (
-              <div className="logistics-policies">
-                {policies.map((policy) => (
-                  <div key={`${policy.name}-${policy.logisticType ?? "all"}`}>
-                    <span>{policy.name}</span>
-                    <strong>{formatLogisticsDuration(policy.targetMinutes, null)}</strong>
-                    <small>{policy.logisticType ? logisticsTypeLabel(policy.logisticType) : "Todas as modalidades"} · {logisticsEventLabel(policy.startEventCode)} → {logisticsEventLabel(policy.endEventCode)}</small>
-                  </div>
-                ))}
-              </div>
-            ) : <p className="empty-table-message">Nenhuma meta interna ativa foi cadastrada.</p>}
-          </article>
-        </section>
-
-        <section className="panel table-panel">
-          <PanelTitle title="Base de prazos por modalidade" subtitle="Detalhamento da origem do prazo e da forma de medição. Use esta tabela para conferir o espaço amostral dos indicadores." />
-          {hasSlaData ? (
-            <div className="table-wrap">
-              <table className="logistics-sla-table">
-                <thead><tr><th>Evento</th><th>Modalidade</th><th>Prazo de referência</th><th>Tipo de medição</th><th className="number-cell">Tempo médio</th><th className="number-cell">Concluídos</th><th className="number-cell">No prazo</th><th className="number-cell">Concluídos com atraso</th><th className="number-cell">Pendentes em atraso</th></tr></thead>
-                <tbody>
-                  {slaBreakdown.map((row) => (
-                    <tr key={`${row.eventName}-${row.logisticType}-${row.targetSource}-${row.measurementQuality}`}>
-                      <td className="primary-cell">{logisticsEventLabel(row.eventName)}</td>
-                      <td>{logisticsTypeLabel(row.logisticType)}</td>
-                      <td>{logisticsSourceLabel(row.targetSource)}</td>
-                      <td><span className={`status-badge ${row.measurementQuality === "prospective" ? "status-good" : "status-neutral"}`}>{logisticsQualityLabel(row.measurementQuality)}</span></td>
-                      <td className="number-cell primary-cell">{formatLogisticsDuration(row.averageElapsedMinutes, null)}</td>
-                      <td className="number-cell">{formatNumber(row.completedCount)}</td>
-                      <td className="number-cell">{formatTablePercent(row.onTimePercent)}</td>
-                      <td className="number-cell">{formatNumber(row.lateCount)}</td>
-                      <td className="number-cell">{formatNumber(row.overdueCount)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : <p className="empty-table-message">Não há dados de prazo no período e na modalidade selecionados.</p>}
-        </section>
+          </div>
+        </details>
       </>
     );
   }
