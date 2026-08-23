@@ -1,4 +1,4 @@
-import type { ComparisonMode } from "@/app/dashboard-types";
+import type { ComparisonMode, LogisticsTypeFilter } from "@/app/dashboard-types";
 import { getDashboardData, type DashboardDateQuery } from "@/lib/supabase-dashboard";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +11,12 @@ const comparisonModes = new Set<ComparisonMode>([
   "previousMonthFull",
   "custom",
   "none",
+]);
+const logisticsTypes = new Set<LogisticsTypeFilter>([
+  "all",
+  "fulfillment",
+  "cross_docking",
+  "flex",
 ]);
 
 function isIsoDate(value: string | null): value is string {
@@ -48,9 +54,19 @@ export async function GET(request: Request) {
     : "previousPeriod";
   const comparisonStart = searchParams.get("comparisonStart");
   const comparisonEnd = searchParams.get("comparisonEnd");
+  const requestedLogisticsType = searchParams.get("logisticsType");
+
+  if (requestedLogisticsType && !logisticsTypes.has(requestedLogisticsType as LogisticsTypeFilter)) {
+    return Response.json(
+      { error: "Modalidade inválida. Use all, fulfillment, cross_docking ou flex." },
+      { status: 400 },
+    );
+  }
+
+  const logisticsType = (requestedLogisticsType ?? "all") as LogisticsTypeFilter;
 
   if (Boolean(currentStart) !== Boolean(currentEnd)) {
-    return Response.json({ error: "Período principal: informe as duas datas." }, { status: 400 });
+    return Response.json({ error: "Informe a data inicial e a data final do período principal." }, { status: 400 });
   }
 
   if (currentStart || currentEnd) {
@@ -66,6 +82,7 @@ export async function GET(request: Request) {
   const query: DashboardDateQuery = {
     periodDays,
     comparisonMode,
+    logisticsType,
     ...(currentStart && currentEnd ? { currentStart, currentEnd } : {}),
     ...(comparisonMode === "custom" && comparisonStart && comparisonEnd
       ? { comparisonStart, comparisonEnd }
