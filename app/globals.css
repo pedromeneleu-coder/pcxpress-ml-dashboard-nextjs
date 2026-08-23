@@ -18,7 +18,7 @@ body {
   margin: 0;
   background: var(--soft);
   color: var(--ink);
-  font-family: Rubik, Inter, "Segoe UI", Arial, sans-serif;
+  font-family: var(--font-interface), "Segoe UI", Arial, sans-serif;
   letter-spacing: 0;
 }
 button, select, input { font: inherit; }
@@ -526,6 +526,55 @@ tbody tr:last-child td { border-bottom: 0; }
 .timeline-placeholder::after { top: 65%; }
 .timeline-placeholder span { flex: 1; min-width: 8px; max-width: 38px; background: linear-gradient(to top, #00a9cd, #00d8ff); border-radius: 3px 3px 0 0; z-index: 1; opacity: .72; }
 .sidebar-overlay { display: none; }
+
+/* Tipografia Aruna: interface humana, display com identidade e dados monoespacados. */
+h1,
+h2,
+h3,
+.fatal-state h1,
+.empty-data-hero h2 {
+  font-family: var(--font-display), var(--font-interface), "Segoe UI", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 650;
+  letter-spacing: -.025em;
+}
+
+.kpi-card > strong,
+.logistics-priority-card > strong {
+  font-family: var(--font-display), var(--font-interface), "Segoe UI", sans-serif;
+  font-optical-sizing: auto;
+  letter-spacing: -.035em;
+}
+
+.number-cell,
+.comparison-indicator,
+.product-variation,
+.rank-cell,
+.chart-axis-text,
+.chart-tooltip-title,
+.chart-tooltip-text,
+.chart-tooltip-change,
+.date-chip strong,
+.commerce-flow-step strong,
+.coverage-numbers strong,
+.metric-bar-row strong,
+.formula-strip,
+.funnel-value,
+.logistics-last-sync strong,
+.logistics-backlog-grid strong,
+.logistics-economics-grid dd,
+.fulfillment-numbers strong,
+.logistics-policies strong,
+.logistics-reconciliation-summary strong,
+.logistics-reconciliation-reasons > div > span,
+.logistics-executive-stage-grid strong,
+.fulfillment-highlight strong,
+.cancellation-bar-column strong,
+.seller-snapshot-grid dd {
+  font-family: var(--font-data), Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.025em;
+}
 
 @keyframes spin {
   to { transform: rotate(360deg); }
