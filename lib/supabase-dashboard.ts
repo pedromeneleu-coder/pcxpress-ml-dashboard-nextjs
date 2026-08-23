@@ -7,10 +7,14 @@ import {
   type DashboardData,
   type FulfillmentInventorySummary,
   type LogisticsEconomicsSummary,
+  type LogisticsOperationalBacklogSummary,
+  type LogisticsReconciliation,
+  type LogisticsReconciliationCounts,
   type LogisticsSlaBreakdown,
   type LogisticsSlaPolicy,
   type LogisticsSlaSummary,
   type LogisticsStageSummary,
+  type LogisticsTypeFilter,
   type ComparisonMode,
   type ProductComparison,
   type ProductPeriodMetrics,
@@ -137,6 +141,35 @@ type LogisticsEconomicsRecord = {
   total_shipping_cost: number | string | null;
 };
 
+type LogisticsReconciliationRecord = {
+  sale_date: string | null;
+  logistic_type: string | null;
+  modality_code: string;
+  reconciliation_reason_code: string;
+  reconciliation_reason: string;
+  reconciliation_order: number | string;
+  reconciliation_scope: string;
+  shipments_count: number | string | null;
+  preparation_started_count: number | string | null;
+  preparation_completed_count: number | string | null;
+  handoff_observed_count: number | string | null;
+  in_hub_observed_count: number | string | null;
+  shipped_observed_count: number | string | null;
+  out_for_delivery_observed_count: number | string | null;
+  delivered_observed_count: number | string | null;
+  on_time_kpi_included_count: number | string | null;
+  included_in_dispatch_kpi_count: number | string | null;
+  backlog_kpi_included_count: number | string | null;
+  terminal_kpi_included_count: number | string | null;
+  on_time_count: number | string | null;
+  late_count: number | string | null;
+  pending_count: number | string | null;
+  overdue_count: number | string | null;
+  cancelled_count: number | string | null;
+  not_delivered_count: number | string | null;
+  delivery_failed_count: number | string | null;
+};
+
 type FulfillmentInventoryRecord = {
   inventory_id: string;
   total_quantity: number | string | null;
@@ -157,6 +190,7 @@ type LogisticsSlaPolicyRecord = {
 
 type LogisticsStageRecord = {
   sale_date: string;
+  logistic_type: string | null;
   stage_order: number | string;
   stage_code: string;
   stage_name: string;
@@ -180,6 +214,15 @@ const DISPLAY_ACCOUNT_NAME = "PCXpress";
 const DEFAULT_SCHEMA = "ml_dashboards";
 const PAGE_SIZE = 1000;
 const REQUEST_TIMEOUT_MS = 15000;
+const PUNCTUALITY_MEASUREMENT_QUALITY = "prospective";
+const BACKLOG_MEASUREMENT_QUALITIES = ["pending", "not_applicable"] as const;
+const DISPATCH_EVENT_NAMES = ["Despacho ao Mercado Livre", "Despacho ao transportador"] as const;
+const DELIVERY_EVENT_NAMES = ["Entrega ao comprador"] as const;
+const LOGISTICS_TYPE_VALUES: Record<Exclude<LogisticsTypeFilter, "all">, readonly string[]> = {
+  fulfillment: ["fulfillment"],
+  cross_docking: ["cross_docking"],
+  flex: ["self_service", "flex"],
+};
 
 export type DashboardDateQuery = {
   periodDays?: number;
@@ -188,9 +231,31 @@ export type DashboardDateQuery = {
   comparisonMode?: ComparisonMode;
   comparisonStart?: string;
   comparisonEnd?: string;
+  logisticsType?: LogisticsTypeFilter;
 };
 
 type ResolvedDateSelection = DashboardData["dateSelection"];
+
+type OptionalFetchResult<T> = {
+  available: boolean;
+  rows: T[];
+};
+
+function logisticsTypeValues(logisticsType: LogisticsTypeFilter): readonly string[] {
+  return logisticsType === "all" ? [] : LOGISTICS_TYPE_VALUES[logisticsType];
+}
+
+function logisticsTypeQuery(logisticsType: LogisticsTypeFilter): Record<string, string> {
+  const values = logisticsTypeValues(logisticsType);
+  return values.length ? { logistic_type: `in.(${values.join(",")})` } : {};
+}
+
+function logisticsPolicyTypeQuery(logisticsType: LogisticsTypeFilter): Record<string, string> {
+  const values = logisticsTypeValues(logisticsType);
+  return values.length
+    ? { or: `(logistic_type.is.null,logistic_type.in.(${values.join(",")}))` }
+    : {};
+}
 
 function readConfig(): SupabaseConfig | null {
   const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -302,6 +367,10 @@ function resolveDateSelection(query: DashboardDateQuery, anchorDate: string): Re
 function fallbackForQuery(query: DashboardDateQuery, message?: string): DashboardData {
   const anchorDate = query.currentEnd ?? FALLBACK_DASHBOARD_DATA.availableDateRange.lastDate ?? new Date().toISOString().slice(0, 10);
   const dateSelection = resolveDateSelection(query, anchorDate);
+  const selectedLogisticsType = query.logisticsType ?? "all";
+  const appliedLogisticsTypes = [...logisticsTypeValues(selectedLogisticsType)];
+  const economicsAvailable = selectedLogisticsType === "all";
+  const fulfillmentIncluded = selectedLogisticsType === "all" || selectedLogisticsType === "fulfillment";
 
   return {
     ...FALLBACK_DASHBOARD_DATA,
@@ -320,6 +389,27 @@ function fallbackForQuery(query: DashboardDateQuery, message?: string): Dashboar
       currentLastDate: dateSelection.currentEnd,
       previousFirstDate: dateSelection.comparisonStart,
       previousLastDate: dateSelection.comparisonEnd,
+    },
+    logistics: {
+      ...FALLBACK_DASHBOARD_DATA.logistics,
+      selectedLogisticsType,
+      metadata: {
+        ...FALLBACK_DASHBOARD_DATA.logistics.metadata,
+        logisticsType: {
+          selected: selectedLogisticsType,
+          appliedValues: appliedLogisticsTypes,
+          observedValues: [],
+        },
+        economics: {
+          ...FALLBACK_DASHBOARD_DATA.logistics.metadata.economics,
+          scope: economicsAvailable ? "all_modalities" : "unavailable_for_selected_modality",
+          available: economicsAvailable,
+        },
+        fulfillment: {
+          ...FALLBACK_DASHBOARD_DATA.logistics.metadata.fulfillment,
+          included: fulfillmentIncluded,
+        },
+      },
     },
   };
 }
@@ -385,6 +475,17 @@ async function optionalFetchAll<T>(config: SupabaseConfig, path: string): Promis
     // A visualizacao de Seller continua disponivel enquanto a nova view SQL
     // ainda nao foi aplicada no ambiente de producao.
     return [];
+  }
+}
+
+async function optionalFetchAllWithAvailability<T>(
+  config: SupabaseConfig,
+  path: string,
+): Promise<OptionalFetchResult<T>> {
+  try {
+    return { available: true, rows: await fetchAll<T>(config, path) };
+  } catch {
+    return { available: false, rows: [] };
   }
 }
 
@@ -490,9 +591,6 @@ function buildSales(records: AccountSummaryRecord[]): DashboardData["sales"] {
 
   const dates = records.map((record) => record.performance_date).sort();
   const hasVisits = records.some((record) => toNullableNumber(record.visits) !== null);
-  // Sem essa distinção, "a view não traz valor pago" viraria R$ 0,00 na tela,
-  // que se lê como queda total de vendas em vez de ausência de dado.
-  const hasPaidGross = records.some((record) => toNullableNumber(record.paid_gross_amount) !== null);
   const conversionRatePercent = totals.visits > 0 ? (totals.ordersCount / totals.visits) * 100 : null;
 
   return {
@@ -500,7 +598,7 @@ function buildSales(records: AccountSummaryRecord[]): DashboardData["sales"] {
     unitsSold: totals.unitsSold,
     ordersCount: totals.ordersCount,
     grossAmount: totals.grossAmount,
-    paidGrossAmount: hasPaidGross ? totals.paidGrossAmount : null,
+    paidGrossAmount: totals.paidGrossAmount,
     avgTicket: totals.ordersCount > 0 ? totals.grossAmount / totals.ordersCount : null,
     conversionRatePercent,
     itemsCount: totals.itemsCount,
@@ -680,6 +778,227 @@ function buildLogisticsSlaSummary(records: LogisticsSlaRecord[]): LogisticsSlaSu
   };
 }
 
+function buildOperationalBacklogSummary(records: LogisticsSlaRecord[]): LogisticsOperationalBacklogSummary {
+  return records.reduce<LogisticsOperationalBacklogSummary>(
+    (acc, record) => {
+      acc.shipmentsCount += toNumber(record.shipments_count);
+      acc.pendingCount += toNumber(record.pending_count);
+      acc.overdueCount += toNumber(record.overdue_count);
+      acc.cancelledCount += toNumber(record.cancelled_count);
+      acc.terminalWithoutCompletionCount += toNumber(record.terminal_without_completion_count);
+      return acc;
+    },
+    {
+      shipmentsCount: 0,
+      pendingCount: 0,
+      overdueCount: 0,
+      cancelledCount: 0,
+      terminalWithoutCompletionCount: 0,
+    },
+  );
+}
+
+function withOperationalBacklog(
+  punctuality: LogisticsSlaSummary,
+  backlog: LogisticsOperationalBacklogSummary,
+): LogisticsSlaSummary {
+  return {
+    ...punctuality,
+    shipmentsCount: punctuality.shipmentsCount + backlog.shipmentsCount,
+    pendingCount: backlog.pendingCount,
+    overdueCount: backlog.overdueCount,
+    cancelledCount: backlog.cancelledCount,
+    terminalWithoutCompletionCount: backlog.terminalWithoutCompletionCount,
+  };
+}
+
+function completedOutsideProspective(records: LogisticsSlaRecord[]): number {
+  return records
+    .filter((record) => record.measurement_quality !== PUNCTUALITY_MEASUREMENT_QUALITY)
+    .reduce((total, record) => total + toNumber(record.completed_count), 0);
+}
+
+function emptyReconciliationCounts(): LogisticsReconciliationCounts {
+  return {
+    shipmentsCount: 0,
+    preparationStartedCount: 0,
+    preparationCompletedCount: 0,
+    handoffObservedCount: 0,
+    inHubObservedCount: 0,
+    shippedObservedCount: 0,
+    outForDeliveryObservedCount: 0,
+    deliveredObservedCount: 0,
+    onTimeKpiIncludedCount: 0,
+    includedInDispatchKpiCount: 0,
+    backlogKpiIncludedCount: 0,
+    terminalKpiIncludedCount: 0,
+    onTimeCount: 0,
+    lateCount: 0,
+    pendingCount: 0,
+    overdueCount: 0,
+    cancelledCount: 0,
+    notDeliveredCount: 0,
+    deliveryFailedCount: 0,
+  };
+}
+
+function addReconciliationRecord(
+  counts: LogisticsReconciliationCounts,
+  record: LogisticsReconciliationRecord,
+): LogisticsReconciliationCounts {
+  counts.shipmentsCount += toNumber(record.shipments_count);
+  counts.preparationStartedCount += toNumber(record.preparation_started_count);
+  counts.preparationCompletedCount += toNumber(record.preparation_completed_count);
+  counts.handoffObservedCount += toNumber(record.handoff_observed_count);
+  counts.inHubObservedCount += toNumber(record.in_hub_observed_count);
+  counts.shippedObservedCount += toNumber(record.shipped_observed_count);
+  counts.outForDeliveryObservedCount += toNumber(record.out_for_delivery_observed_count);
+  counts.deliveredObservedCount += toNumber(record.delivered_observed_count);
+  counts.onTimeKpiIncludedCount += toNumber(record.on_time_kpi_included_count);
+  counts.includedInDispatchKpiCount += toNumber(record.included_in_dispatch_kpi_count);
+  counts.backlogKpiIncludedCount += toNumber(record.backlog_kpi_included_count);
+  counts.terminalKpiIncludedCount += toNumber(record.terminal_kpi_included_count);
+  counts.onTimeCount += toNumber(record.on_time_count);
+  counts.lateCount += toNumber(record.late_count);
+  counts.pendingCount += toNumber(record.pending_count);
+  counts.overdueCount += toNumber(record.overdue_count);
+  counts.cancelledCount += toNumber(record.cancelled_count);
+  counts.notDeliveredCount += toNumber(record.not_delivered_count);
+  counts.deliveryFailedCount += toNumber(record.delivery_failed_count);
+  return counts;
+}
+
+function reconciliationCounts(records: LogisticsReconciliationRecord[]): LogisticsReconciliationCounts {
+  return records.reduce(addReconciliationRecord, emptyReconciliationCounts());
+}
+
+function percentOf(count: number, total: number): number | null {
+  return total > 0 ? (count / total) * 100 : null;
+}
+
+function buildLogisticsReconciliation(
+  result: OptionalFetchResult<LogisticsReconciliationRecord>,
+): LogisticsReconciliation {
+  const basis = {
+    direction: "outbound" as const,
+    slaEvent: "dispatch" as const,
+    dateField: "sale_date" as const,
+  };
+
+  if (!result.available) {
+    return {
+      available: false,
+      hasData: false,
+      sourceRows: null,
+      shipmentsCount: 0,
+      preparationStartedCount: 0,
+      preparationCompletedCount: 0,
+      includedInDispatchKpiCount: 0,
+      basis,
+      totals: null,
+      reasons: [],
+    };
+  }
+
+  const totalCounts = reconciliationCounts(result.rows);
+  const excludedCount = Math.max(
+    totalCounts.shipmentsCount -
+      totalCounts.includedInDispatchKpiCount -
+      totalCounts.backlogKpiIncludedCount -
+      totalCounts.terminalKpiIncludedCount,
+    0,
+  );
+  const totals = {
+    ...totalCounts,
+    excludedCount,
+    dispatchKpiInclusionPercent: percentOf(
+      totalCounts.includedInDispatchKpiCount,
+      totalCounts.shipmentsCount,
+    ),
+    backlogPercent: percentOf(totalCounts.backlogKpiIncludedCount, totalCounts.shipmentsCount),
+    terminalPercent: percentOf(totalCounts.terminalKpiIncludedCount, totalCounts.shipmentsCount),
+    excludedPercent: percentOf(excludedCount, totalCounts.shipmentsCount),
+  };
+  const modalityTotals = new Map<string, number>();
+  const groups = new Map<
+    string,
+    {
+      logisticType: string | null;
+      modalityCode: string;
+      reasonCode: string;
+      reason: string;
+      reconciliationOrder: number;
+      scope: string;
+      records: LogisticsReconciliationRecord[];
+    }
+  >();
+
+  for (const record of result.rows) {
+    const modalityKey = JSON.stringify([record.logistic_type, record.modality_code]);
+    modalityTotals.set(
+      modalityKey,
+      (modalityTotals.get(modalityKey) ?? 0) + toNumber(record.shipments_count),
+    );
+
+    const groupKey = JSON.stringify([
+      record.logistic_type,
+      record.modality_code,
+      record.reconciliation_reason_code,
+    ]);
+    const group = groups.get(groupKey) ?? {
+      logisticType: record.logistic_type,
+      modalityCode: record.modality_code,
+      reasonCode: record.reconciliation_reason_code,
+      reason: record.reconciliation_reason,
+      reconciliationOrder: toNumber(record.reconciliation_order),
+      scope: record.reconciliation_scope,
+      records: [],
+    };
+    group.records.push(record);
+    groups.set(groupKey, group);
+  }
+
+  const reasons = Array.from(groups.values())
+    .map((group) => {
+      const counts = reconciliationCounts(group.records);
+      const modalityTotal = modalityTotals.get(
+        JSON.stringify([group.logisticType, group.modalityCode]),
+      ) ?? 0;
+
+      return {
+        logisticType: group.logisticType,
+        modalityCode: group.modalityCode,
+        reasonCode: group.reasonCode,
+        reason: group.reason,
+        reconciliationOrder: group.reconciliationOrder,
+        scope: group.scope,
+        ...counts,
+        shareOfTotalPercent: percentOf(counts.shipmentsCount, totalCounts.shipmentsCount),
+        shareWithinModalityPercent: percentOf(counts.shipmentsCount, modalityTotal),
+      };
+    })
+    .sort(
+      (a, b) =>
+        (a.logisticType ?? "").localeCompare(b.logisticType ?? "") ||
+        a.modalityCode.localeCompare(b.modalityCode) ||
+        a.reconciliationOrder - b.reconciliationOrder ||
+        a.reasonCode.localeCompare(b.reasonCode),
+    );
+
+  return {
+    available: true,
+    hasData: totalCounts.shipmentsCount > 0,
+    sourceRows: result.rows.length,
+    shipmentsCount: totalCounts.shipmentsCount,
+    preparationStartedCount: totalCounts.preparationStartedCount,
+    preparationCompletedCount: totalCounts.preparationCompletedCount,
+    includedInDispatchKpiCount: totalCounts.includedInDispatchKpiCount,
+    basis,
+    totals,
+    reasons,
+  };
+}
+
 function buildLogisticsSlaBreakdown(records: LogisticsSlaRecord[]): LogisticsSlaBreakdown[] {
   const groups = new Map<string, { key: Omit<LogisticsSlaBreakdown, keyof LogisticsSlaSummary>; records: LogisticsSlaRecord[] }>();
 
@@ -717,9 +1036,10 @@ function buildLogisticsStages(records: LogisticsStageRecord[]): LogisticsStageSu
   const groups = new Map<string, LogisticsStageRecord[]>();
 
   for (const record of records) {
-    const group = groups.get(record.stage_code) ?? [];
+    const key = [record.logistic_type ?? "Sem modalidade", record.stage_code].join("|");
+    const group = groups.get(key) ?? [];
     group.push(record);
-    groups.set(record.stage_code, group);
+    groups.set(key, group);
   }
 
   return Array.from(groups.values())
@@ -739,6 +1059,7 @@ function buildLogisticsStages(records: LogisticsStageRecord[]): LogisticsStageSu
         : null;
 
       return {
+        logisticType: first.logistic_type,
         stageOrder: toNumber(first.stage_order),
         stageCode: first.stage_code,
         stageName: first.stage_name,
@@ -757,7 +1078,11 @@ function buildLogisticsStages(records: LogisticsStageRecord[]): LogisticsStageSu
         aboveTargetCount: group.filter((record) => record.above_target === true).length,
       };
     })
-    .sort((a, b) => a.stageOrder - b.stageOrder);
+    .sort(
+      (a, b) =>
+        a.stageOrder - b.stageOrder ||
+        (a.logisticType ?? "").localeCompare(b.logisticType ?? ""),
+    );
 }
 
 function buildLogisticsEconomics(records: LogisticsEconomicsRecord[]): LogisticsEconomicsSummary {
@@ -928,6 +1253,7 @@ function buildProductComparisons(
 
 export async function getDashboardData(query: DashboardDateQuery = {}): Promise<DashboardData> {
   const config = readConfig();
+  const selectedLogisticsType = query.logisticsType ?? "all";
 
   if (!config) {
     return fallbackForQuery(query);
@@ -982,6 +1308,11 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       : {
           and: `(sale_date.gte.${dateSelection.currentStart},sale_date.lte.${dateSelection.currentEnd})`,
         };
+    const reconciliationPeriodFilter = {
+      and: `(sale_date.gte.${dateSelection.currentStart},sale_date.lte.${dateSelection.currentEnd})`,
+    };
+    const selectedLogisticsTypeQuery = logisticsTypeQuery(selectedLogisticsType);
+    const selectedLogisticsPolicyTypeQuery = logisticsPolicyTypeQuery(selectedLogisticsType);
     const [
       catalogRecords,
       summaryRecords,
@@ -990,6 +1321,8 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       sellerSnapshotRecords,
       cancellationRecords,
       logisticsSlaRecords,
+      logisticsReconciliationResult,
+      operationalLogisticsSlaRecords,
       logisticsEconomicsRecords,
       fulfillmentRecords,
       logisticsPolicyRecords,
@@ -1057,27 +1390,57 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           select:
             "sale_date,logistic_type,event_name,target_source,measurement_quality,shipments_count,completed_count,on_time_count,late_count,pending_count,overdue_count,avg_elapsed_minutes,avg_breach_minutes,avg_breach_days,cancelled_count,terminal_without_completion_count",
           account_id: accountFilter,
+          ...selectedLogisticsTypeQuery,
           ...logisticsPeriodFilter,
           order: "sale_date.asc",
         }),
       ),
-      optionalFetchAll<LogisticsEconomicsRecord>(
+      optionalFetchAllWithAvailability<LogisticsReconciliationRecord>(
         config,
-        appendQuery("dashboard_daily_logistics_economics", {
+        appendQuery("dashboard_daily_logistics_reconciliation_waterfall", {
           select:
-            "sale_date,orders_count,paid_orders_count,orders_with_return,orders_with_return_cost,returned_units,paid_gross_revenue,outbound_shipping_cost,return_shipping_cost,total_shipping_cost",
+            "sale_date,logistic_type,modality_code,reconciliation_reason_code,reconciliation_reason,reconciliation_order,reconciliation_scope,shipments_count,preparation_started_count,preparation_completed_count,handoff_observed_count,in_hub_observed_count,shipped_observed_count,out_for_delivery_observed_count,delivered_observed_count,on_time_kpi_included_count,included_in_dispatch_kpi_count,backlog_kpi_included_count,terminal_kpi_included_count,on_time_count,late_count,pending_count,overdue_count,cancelled_count,not_delivered_count,delivery_failed_count",
           account_id: accountFilter,
-          ...logisticsPeriodFilter,
+          direction: "eq.outbound",
+          sla_event: "eq.dispatch",
+          ...selectedLogisticsTypeQuery,
+          ...reconciliationPeriodFilter,
+          order: "sale_date.asc,reconciliation_order.asc",
+        }),
+      ),
+      optionalFetchAll<LogisticsSlaRecord>(
+        config,
+        appendQuery("dashboard_daily_logistics_sla", {
+          select:
+            "sale_date,logistic_type,event_name,target_source,measurement_quality,shipments_count,completed_count,on_time_count,late_count,pending_count,overdue_count,avg_elapsed_minutes,avg_breach_minutes,avg_breach_days,cancelled_count,terminal_without_completion_count",
+          account_id: accountFilter,
+          target_source: "in.(meli_sla,meli_lead_time)",
+          measurement_quality: "in.(pending,not_applicable)",
+          ...selectedLogisticsTypeQuery,
           order: "sale_date.asc",
         }),
       ),
-      optionalFetchAll<FulfillmentInventoryRecord>(
-        config,
-        appendQuery("dashboard_fulfillment_inventory", {
-          select: "inventory_id,total_quantity,available_quantity,not_available_quantity,synced_at",
-          account_id: accountFilter,
-        }),
-      ),
+      selectedLogisticsType === "all"
+        ? optionalFetchAll<LogisticsEconomicsRecord>(
+            config,
+            appendQuery("dashboard_daily_logistics_economics", {
+              select:
+                "sale_date,orders_count,paid_orders_count,orders_with_return,orders_with_return_cost,returned_units,paid_gross_revenue,outbound_shipping_cost,return_shipping_cost,total_shipping_cost",
+              account_id: accountFilter,
+              ...logisticsPeriodFilter,
+              order: "sale_date.asc",
+            }),
+          )
+        : Promise.resolve<LogisticsEconomicsRecord[]>([]),
+      selectedLogisticsType === "all" || selectedLogisticsType === "fulfillment"
+        ? optionalFetchAll<FulfillmentInventoryRecord>(
+            config,
+            appendQuery("dashboard_fulfillment_inventory", {
+              select: "inventory_id,total_quantity,available_quantity,not_available_quantity,synced_at",
+              account_id: accountFilter,
+            }),
+          )
+        : Promise.resolve<FulfillmentInventoryRecord[]>([]),
       optionalFetchAll<LogisticsSlaPolicyRecord>(
         config,
         appendQuery("logistics_sla_policies", {
@@ -1085,6 +1448,7 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           account_id: accountFilter,
           active: "eq.true",
           valid_from: `lte.${dateSelection.currentEnd}`,
+          ...selectedLogisticsPolicyTypeQuery,
           order: "policy_name.asc",
         }),
       ),
@@ -1092,8 +1456,9 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
         config,
         appendQuery("dashboard_logistics_stage_times", {
           select:
-            "sale_date,stage_order,stage_code,stage_name,start_event_code,end_event_code,stage_status,duration_minutes,target_minutes,above_target",
+            "sale_date,logistic_type,stage_order,stage_code,stage_name,start_event_code,end_event_code,stage_status,duration_minutes,target_minutes,above_target",
           account_id: accountFilter,
+          ...selectedLogisticsTypeQuery,
           ...logisticsPeriodFilter,
           order: "sale_date.asc,stage_order.asc",
         }),
@@ -1143,12 +1508,66 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
     const currentLogisticsStageRecords = logisticsStageRecords.filter((record) =>
       inRange(record.sale_date, dateSelection.currentStart, dateSelection.currentEnd),
     );
-    const officialSla = (records: LogisticsSlaRecord[], eventNames: string[], targetSource: string) =>
+    const officialSla = (records: LogisticsSlaRecord[], eventNames: readonly string[], targetSource: string) =>
       records.filter((record) =>
         eventNames.includes(record.event_name) &&
-        record.target_source === targetSource &&
-        record.measurement_quality === "prospective",
+        record.target_source === targetSource,
       );
+    const prospective = (records: LogisticsSlaRecord[]) =>
+      records.filter((record) => record.measurement_quality === PUNCTUALITY_MEASUREMENT_QUALITY);
+    const operational = (records: LogisticsSlaRecord[]) =>
+      records.filter((record) =>
+        BACKLOG_MEASUREMENT_QUALITIES.includes(
+          record.measurement_quality as (typeof BACKLOG_MEASUREMENT_QUALITIES)[number],
+        ),
+      );
+    const currentOfficialDispatchRecords = officialSla(currentLogisticsSlaRecords, DISPATCH_EVENT_NAMES, "meli_sla");
+    const currentOfficialDeliveryRecords = officialSla(currentLogisticsSlaRecords, DELIVERY_EVENT_NAMES, "meli_lead_time");
+    const previousOfficialDispatchRecords = officialSla(previousLogisticsSlaRecords, DISPATCH_EVENT_NAMES, "meli_sla");
+    const previousOfficialDeliveryRecords = officialSla(previousLogisticsSlaRecords, DELIVERY_EVENT_NAMES, "meli_lead_time");
+    const currentDispatchPunctualityRecords = prospective(currentOfficialDispatchRecords);
+    const currentDeliveryPunctualityRecords = prospective(currentOfficialDeliveryRecords);
+    const previousDispatchPunctualityRecords = prospective(previousOfficialDispatchRecords);
+    const previousDeliveryPunctualityRecords = prospective(previousOfficialDeliveryRecords);
+    const operationalDispatchRecords = operational(
+      officialSla(operationalLogisticsSlaRecords, DISPATCH_EVENT_NAMES, "meli_sla"),
+    );
+    const operationalDeliveryRecords = operational(
+      officialSla(operationalLogisticsSlaRecords, DELIVERY_EVENT_NAMES, "meli_lead_time"),
+    );
+    const dispatchPunctuality = buildLogisticsSlaSummary(currentDispatchPunctualityRecords);
+    const deliveryPunctuality = buildLogisticsSlaSummary(currentDeliveryPunctualityRecords);
+    const comparisonDispatchPunctuality = previousDispatchPunctualityRecords.length
+      ? buildLogisticsSlaSummary(previousDispatchPunctualityRecords)
+      : null;
+    const comparisonDeliveryPunctuality = previousDeliveryPunctualityRecords.length
+      ? buildLogisticsSlaSummary(previousDeliveryPunctualityRecords)
+      : null;
+    const dispatchBacklog = buildOperationalBacklogSummary(operationalDispatchRecords);
+    const deliveryBacklog = buildOperationalBacklogSummary(operationalDeliveryRecords);
+    const stages = buildLogisticsStages(currentLogisticsStageRecords);
+    const observedLogisticsTypes = Array.from(
+      new Set(
+        [
+          ...logisticsSlaRecords.map((record) => record.logistic_type),
+          ...operationalLogisticsSlaRecords.map((record) => record.logistic_type),
+          ...logisticsStageRecords.map((record) => record.logistic_type),
+          ...logisticsPolicyRecords.map((record) => record.logistic_type),
+        ].filter((value): value is string => Boolean(value)),
+      ),
+    ).sort();
+    const comparisonBase = hasComparison
+      ? {
+          dispatch: comparisonDispatchPunctuality?.completedCount ?? 0,
+          delivery: comparisonDeliveryPunctuality?.completedCount ?? 0,
+        }
+      : null;
+    const comparisonExcludedCompleted = hasComparison
+      ? {
+          dispatch: completedOutsideProspective(previousOfficialDispatchRecords),
+          delivery: completedOutsideProspective(previousOfficialDeliveryRecords),
+        }
+      : null;
 
     return {
       source: "supabase",
@@ -1204,22 +1623,24 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
         dailyComparison: buildCancellationDaily(previousCancellationRecords),
       },
       logistics: {
-        dispatch: buildLogisticsSlaSummary(
-          officialSla(currentLogisticsSlaRecords, ["Despacho ao Mercado Livre", "Despacho ao transportador"], "meli_sla"),
-        ),
-        delivery: buildLogisticsSlaSummary(
-          officialSla(currentLogisticsSlaRecords, ["Entrega ao comprador"], "meli_lead_time"),
-        ),
-        comparisonDispatch: previousLogisticsSlaRecords.length
-          ? buildLogisticsSlaSummary(
-            officialSla(previousLogisticsSlaRecords, ["Despacho ao Mercado Livre", "Despacho ao transportador"], "meli_sla"),
-          )
-          : null,
-        comparisonDelivery: previousLogisticsSlaRecords.length
-          ? buildLogisticsSlaSummary(
-            officialSla(previousLogisticsSlaRecords, ["Entrega ao comprador"], "meli_lead_time"),
-          )
-          : null,
+        selectedLogisticsType,
+        reconciliation: buildLogisticsReconciliation(logisticsReconciliationResult),
+        punctuality: {
+          dispatch: dispatchPunctuality,
+          delivery: deliveryPunctuality,
+          comparisonDispatch: comparisonDispatchPunctuality,
+          comparisonDelivery: comparisonDeliveryPunctuality,
+        },
+        operationalBacklog: {
+          dispatch: dispatchBacklog,
+          delivery: deliveryBacklog,
+          comparison: null,
+        },
+        // Campos legados mantidos enquanto a UI migra para punctuality e operationalBacklog.
+        dispatch: withOperationalBacklog(dispatchPunctuality, dispatchBacklog),
+        delivery: withOperationalBacklog(deliveryPunctuality, deliveryBacklog),
+        comparisonDispatch: comparisonDispatchPunctuality,
+        comparisonDelivery: comparisonDeliveryPunctuality,
         slaBreakdown: buildLogisticsSlaBreakdown(currentLogisticsSlaRecords),
         economics: buildLogisticsEconomics(currentLogisticsEconomicsRecords),
         comparisonEconomics: previousLogisticsEconomicsRecords.length
@@ -1229,7 +1650,56 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
         policies: buildLogisticsPolicies(
           logisticsPolicyRecords.filter((record) => !record.valid_to || record.valid_to >= dateSelection.currentStart),
         ),
-        stages: buildLogisticsStages(currentLogisticsStageRecords),
+        stages,
+        metadata: {
+          logisticsType: {
+            selected: selectedLogisticsType,
+            appliedValues: [...logisticsTypeValues(selectedLogisticsType)],
+            observedValues: observedLogisticsTypes,
+          },
+          punctuality: {
+            population: "completed_shipments",
+            measurementQualities: [PUNCTUALITY_MEASUREMENT_QUALITY],
+            currentBase: {
+              dispatch: dispatchPunctuality.completedCount,
+              delivery: deliveryPunctuality.completedCount,
+            },
+            comparisonBase,
+            currentExcludedCompleted: {
+              dispatch: completedOutsideProspective(currentOfficialDispatchRecords),
+              delivery: completedOutsideProspective(currentOfficialDeliveryRecords),
+            },
+            comparisonExcludedCompleted,
+          },
+          backlog: {
+            population: "pending_overdue_or_terminal_shipments",
+            measurementQualities: [...BACKLOG_MEASUREMENT_QUALITIES],
+            currentBase: {
+              dispatch: dispatchBacklog.shipmentsCount,
+              delivery: deliveryBacklog.shipmentsCount,
+            },
+            comparisonBase: null,
+            historicalComparisonAvailable: false,
+          },
+          stages: {
+            population: "shipments_with_stage_start",
+            groupedByLogisticsType: true,
+            rowCount: currentLogisticsStageRecords.length,
+            completedBase: stages.reduce((total, stage) => total + stage.completedCount, 0),
+          },
+          economics: {
+            population: "orders_by_sale_date",
+            scope: selectedLogisticsType === "all"
+              ? "all_modalities"
+              : "unavailable_for_selected_modality",
+            available: selectedLogisticsType === "all",
+          },
+          fulfillment: {
+            population: "current_inventory",
+            logisticsType: "fulfillment",
+            included: selectedLogisticsType === "all" || selectedLogisticsType === "fulfillment",
+          },
+        },
       },
     };
   } catch (error) {
