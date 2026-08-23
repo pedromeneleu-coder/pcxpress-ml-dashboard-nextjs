@@ -7,6 +7,8 @@ export type ComparisonMode =
   | "custom"
   | "none";
 
+export type LogisticsTypeFilter = "all" | "fulfillment" | "cross_docking" | "flex";
+
 export type CatalogRow = {
   source: string;
   status: string;
@@ -143,6 +145,72 @@ export type LogisticsSlaBreakdown = LogisticsSlaSummary & {
   measurementQuality: string;
 };
 
+export type LogisticsOperationalBacklogSummary = {
+  shipmentsCount: number;
+  pendingCount: number;
+  overdueCount: number;
+  cancelledCount: number;
+  terminalWithoutCompletionCount: number;
+};
+
+export type LogisticsReconciliationCounts = {
+  shipmentsCount: number;
+  preparationStartedCount: number;
+  preparationCompletedCount: number;
+  handoffObservedCount: number;
+  inHubObservedCount: number;
+  shippedObservedCount: number;
+  outForDeliveryObservedCount: number;
+  deliveredObservedCount: number;
+  onTimeKpiIncludedCount: number;
+  includedInDispatchKpiCount: number;
+  backlogKpiIncludedCount: number;
+  terminalKpiIncludedCount: number;
+  onTimeCount: number;
+  lateCount: number;
+  pendingCount: number;
+  overdueCount: number;
+  cancelledCount: number;
+  notDeliveredCount: number;
+  deliveryFailedCount: number;
+};
+
+export type LogisticsReconciliationTotals = LogisticsReconciliationCounts & {
+  excludedCount: number;
+  dispatchKpiInclusionPercent: number | null;
+  backlogPercent: number | null;
+  terminalPercent: number | null;
+  excludedPercent: number | null;
+};
+
+export type LogisticsReconciliationReason = LogisticsReconciliationCounts & {
+  logisticType: string | null;
+  modalityCode: string;
+  reasonCode: string;
+  reason: string;
+  reconciliationOrder: number;
+  scope: string;
+  shareOfTotalPercent: number | null;
+  shareWithinModalityPercent: number | null;
+};
+
+export type LogisticsReconciliation = {
+  available: boolean;
+  hasData: boolean;
+  sourceRows: number | null;
+  shipmentsCount: number;
+  preparationStartedCount: number;
+  preparationCompletedCount: number;
+  includedInDispatchKpiCount: number;
+  basis: {
+    direction: "outbound";
+    slaEvent: "dispatch";
+    dateField: "sale_date";
+  };
+  totals: LogisticsReconciliationTotals | null;
+  reasons: LogisticsReconciliationReason[];
+};
+
 export type LogisticsEconomicsSummary = {
   ordersCount: number;
   paidOrdersCount: number;
@@ -175,6 +243,7 @@ export type LogisticsSlaPolicy = {
 };
 
 export type LogisticsStageSummary = {
+  logisticType: string | null;
   stageOrder: number;
   stageCode: string;
   stageName: string;
@@ -193,7 +262,64 @@ export type LogisticsStageSummary = {
   aboveTargetCount: number;
 };
 
+export type LogisticsMetricBase = {
+  dispatch: number;
+  delivery: number;
+};
+
+export type LogisticsMetadata = {
+  logisticsType: {
+    selected: LogisticsTypeFilter;
+    appliedValues: string[];
+    observedValues: string[];
+  };
+  punctuality: {
+    population: "completed_shipments";
+    measurementQualities: string[];
+    currentBase: LogisticsMetricBase;
+    comparisonBase: LogisticsMetricBase | null;
+    currentExcludedCompleted: LogisticsMetricBase;
+    comparisonExcludedCompleted: LogisticsMetricBase | null;
+  };
+  backlog: {
+    population: "pending_overdue_or_terminal_shipments";
+    measurementQualities: string[];
+    currentBase: LogisticsMetricBase;
+    comparisonBase: null;
+    historicalComparisonAvailable: false;
+  };
+  stages: {
+    population: "shipments_with_stage_start";
+    groupedByLogisticsType: true;
+    rowCount: number;
+    completedBase: number;
+  };
+  economics: {
+    population: "orders_by_sale_date";
+    scope: "all_modalities" | "unavailable_for_selected_modality";
+    available: boolean;
+  };
+  fulfillment: {
+    population: "current_inventory";
+    logisticsType: "fulfillment";
+    included: boolean;
+  };
+};
+
 export type LogisticsData = {
+  selectedLogisticsType: LogisticsTypeFilter;
+  reconciliation: LogisticsReconciliation;
+  punctuality: {
+    dispatch: LogisticsSlaSummary;
+    delivery: LogisticsSlaSummary;
+    comparisonDispatch: LogisticsSlaSummary | null;
+    comparisonDelivery: LogisticsSlaSummary | null;
+  };
+  operationalBacklog: {
+    dispatch: LogisticsOperationalBacklogSummary;
+    delivery: LogisticsOperationalBacklogSummary;
+    comparison: null;
+  };
   dispatch: LogisticsSlaSummary;
   delivery: LogisticsSlaSummary;
   comparisonDispatch: LogisticsSlaSummary | null;
@@ -204,6 +330,7 @@ export type LogisticsData = {
   fulfillment: FulfillmentInventorySummary;
   policies: LogisticsSlaPolicy[];
   stages: LogisticsStageSummary[];
+  metadata: LogisticsMetadata;
 };
 
 export type DashboardData = {
@@ -272,7 +399,7 @@ export type DashboardData = {
 export const FALLBACK_DASHBOARD_DATA: DashboardData = {
   source: "fallback",
   connected: false,
-  message: "Aguardando variáveis do Supabase.",
+  message: "Dados ainda não disponíveis.",
   accountName: "PCXpress",
   periodDays: 30,
   updatedAt: null,
@@ -375,6 +502,44 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
     dailyComparison: [],
   },
   logistics: {
+    selectedLogisticsType: "all",
+    reconciliation: {
+      available: false,
+      hasData: false,
+      sourceRows: null,
+      shipmentsCount: 0,
+      preparationStartedCount: 0,
+      preparationCompletedCount: 0,
+      includedInDispatchKpiCount: 0,
+      basis: {
+        direction: "outbound",
+        slaEvent: "dispatch",
+        dateField: "sale_date",
+      },
+      totals: null,
+      reasons: [],
+    },
+    punctuality: {
+      dispatch: {
+        shipmentsCount: 0, completedCount: 0, onTimeCount: 0, lateCount: 0, pendingCount: 0, overdueCount: 0,
+        cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageElapsedMinutes: null, averageBreachMinutes: null, averageBreachDays: null,
+      },
+      delivery: {
+        shipmentsCount: 0, completedCount: 0, onTimeCount: 0, lateCount: 0, pendingCount: 0, overdueCount: 0,
+        cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageElapsedMinutes: null, averageBreachMinutes: null, averageBreachDays: null,
+      },
+      comparisonDispatch: null,
+      comparisonDelivery: null,
+    },
+    operationalBacklog: {
+      dispatch: {
+        shipmentsCount: 0, pendingCount: 0, overdueCount: 0, cancelledCount: 0, terminalWithoutCompletionCount: 0,
+      },
+      delivery: {
+        shipmentsCount: 0, pendingCount: 0, overdueCount: 0, cancelledCount: 0, terminalWithoutCompletionCount: 0,
+      },
+      comparison: null,
+    },
     dispatch: {
       shipmentsCount: 0, completedCount: 0, onTimeCount: 0, lateCount: 0, pendingCount: 0, overdueCount: 0,
       cancelledCount: 0, terminalWithoutCompletionCount: 0, onTimePercent: null, averageElapsedMinutes: null, averageBreachMinutes: null, averageBreachDays: null,
@@ -397,5 +562,43 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
     },
     policies: [],
     stages: [],
+    metadata: {
+      logisticsType: {
+        selected: "all",
+        appliedValues: [],
+        observedValues: [],
+      },
+      punctuality: {
+        population: "completed_shipments",
+        measurementQualities: ["prospective"],
+        currentBase: { dispatch: 0, delivery: 0 },
+        comparisonBase: null,
+        currentExcludedCompleted: { dispatch: 0, delivery: 0 },
+        comparisonExcludedCompleted: null,
+      },
+      backlog: {
+        population: "pending_overdue_or_terminal_shipments",
+        measurementQualities: ["pending", "not_applicable"],
+        currentBase: { dispatch: 0, delivery: 0 },
+        comparisonBase: null,
+        historicalComparisonAvailable: false,
+      },
+      stages: {
+        population: "shipments_with_stage_start",
+        groupedByLogisticsType: true,
+        rowCount: 0,
+        completedBase: 0,
+      },
+      economics: {
+        population: "orders_by_sale_date",
+        scope: "all_modalities",
+        available: true,
+      },
+      fulfillment: {
+        population: "current_inventory",
+        logisticsType: "fulfillment",
+        included: true,
+      },
+    },
   },
 };
