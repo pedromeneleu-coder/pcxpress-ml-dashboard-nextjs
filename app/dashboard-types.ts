@@ -368,6 +368,67 @@ export type LogisticsData = {
   metadata: LogisticsMetadata;
 };
 
+export type LogisticsV2Summary = {
+  shipments: number;
+  delivered: number;
+  notDelivered: number;
+  cancelled: number;
+  open: number;
+  deliverySuccessPercent: number | null;
+  paidToTransitBase: number;
+  transitToDeliveryBase: number;
+  paidToDeliveryBase: number;
+  paidToTransitMedianSeconds: number | null;
+  paidToTransitP90Seconds: number | null;
+  transitToDeliveryMedianSeconds: number | null;
+  transitToDeliveryP90Seconds: number | null;
+  paidToDeliveryMedianSeconds: number | null;
+  paidToDeliveryP90Seconds: number | null;
+};
+
+export type LogisticsV2ModalitySummary = LogisticsV2Summary & {
+  logisticType: string;
+};
+
+export type LogisticsV2DailyPoint = {
+  date: string;
+  shipments: number;
+  delivered: number;
+  open: number;
+  deliverySuccessPercent: number | null;
+};
+
+export type LogisticsV2Data = {
+  enabled: boolean;
+  available: boolean;
+  message: string | null;
+  selectedLogisticsType: LogisticsTypeFilter;
+  current: LogisticsV2Summary;
+  comparison: LogisticsV2Summary | null;
+  modalities: LogisticsV2ModalitySummary[];
+  daily: LogisticsV2DailyPoint[];
+  backlog: {
+    total: number;
+    lessThan24Hours: number;
+    from24To48Hours: number;
+    from48To72Hours: number;
+    atLeast72Hours: number;
+    unknownAge: number;
+    oldestAgeSeconds: number | null;
+    lastSyncedAt: string | null;
+  };
+  health: {
+    shipments: number;
+    openShipments: number;
+    qualityIssues: number;
+    unclassifiedLogisticTypes: number;
+    latestRunStatus: string | null;
+    latestRunFinishedAt: string | null;
+    lastSuccessAt: string | null;
+    secondsSinceLastSuccess: number | null;
+  };
+};
+
 export type DashboardData = {
   source: "supabase" | "fallback";
   connected: boolean;
@@ -429,6 +490,7 @@ export type DashboardData = {
     dailyComparison: CancellationDailyPoint[];
   };
   logistics: LogisticsData;
+  logisticsV2: LogisticsV2Data;
 };
 
 export const FALLBACK_DASHBOARD_DATA: DashboardData = {
@@ -686,6 +748,52 @@ export const FALLBACK_DASHBOARD_DATA: DashboardData = {
           },
         ],
       },
+    },
+  },
+  logisticsV2: {
+    enabled: false,
+    available: false,
+    message: "Logística V2 protegida por feature flag.",
+    selectedLogisticsType: "all",
+    current: {
+      shipments: 0,
+      delivered: 0,
+      notDelivered: 0,
+      cancelled: 0,
+      open: 0,
+      deliverySuccessPercent: null,
+      paidToTransitBase: 0,
+      transitToDeliveryBase: 0,
+      paidToDeliveryBase: 0,
+      paidToTransitMedianSeconds: null,
+      paidToTransitP90Seconds: null,
+      transitToDeliveryMedianSeconds: null,
+      transitToDeliveryP90Seconds: null,
+      paidToDeliveryMedianSeconds: null,
+      paidToDeliveryP90Seconds: null,
+    },
+    comparison: null,
+    modalities: [],
+    daily: [],
+    backlog: {
+      total: 0,
+      lessThan24Hours: 0,
+      from24To48Hours: 0,
+      from48To72Hours: 0,
+      atLeast72Hours: 0,
+      unknownAge: 0,
+      oldestAgeSeconds: null,
+      lastSyncedAt: null,
+    },
+    health: {
+      shipments: 0,
+      openShipments: 0,
+      qualityIssues: 0,
+      unclassifiedLogisticTypes: 0,
+      latestRunStatus: null,
+      latestRunFinishedAt: null,
+      lastSuccessAt: null,
+      secondsSinceLastSuccess: null,
     },
   },
 };
