@@ -48,7 +48,6 @@
     { id: "products", label: "Produtos e anúncios", icon: ShoppingBag },
     { id: "performance", label: "Desempenho", icon: BarChart3 },
     { id: "traffic", label: "Tráfego e conversão", icon: Eye },
-    { id: "logistics", label: "Logística", icon: Truck },
     { id: "seller", label: "Saúde da conta", icon: ShieldCheck },
   ] as const;
   
@@ -153,6 +152,21 @@
       return `${totalDays.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} ${totalDays === 1 ? "dia" : "dias"}`;
     }
     return `${(minutes / 60).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h`;
+  }
+
+  function formatLogisticsV2Seconds(seconds: number | null) {
+    return seconds === null ? "—" : formatLogisticsDuration(seconds / 60, null);
+  }
+
+  function formatLogisticsV2Timestamp(value: string | null) {
+    if (!value) return "Sem registro";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Sem registro";
+    return new Intl.DateTimeFormat("pt-BR", {
+      dateStyle: "short",
+      timeStyle: "short",
+      timeZone: "America/Sao_Paulo",
+    }).format(date);
   }
   
   function logisticsSourceLabel(source: string) {
@@ -1453,6 +1467,188 @@
       </>
     );
   }
+
+  function LogisticsV2View({
+    data,
+    logisticsType,
+    onLogisticsTypeChange,
+  }: {
+    data: DashboardData;
+    logisticsType: LogisticsTypeFilter;
+    onLogisticsTypeChange: (value: LogisticsTypeFilter) => void;
+  }) {
+    const logistics = data.logisticsV2;
+    const { current, comparison, backlog, health } = logistics;
+    const healthIsGood = logistics.available
+      && health.latestRunStatus === "success"
+      && health.qualityIssues === 0;
+    const maxDailyShipments = Math.max(...logistics.daily.map((point) => point.shipments), 1);
+
+    return (
+      <>
+        <section className="panel logistics-command-bar logistics-v2-command" aria-labelledby="logistics-v2-title">
+          <div className="logistics-filter-heading">
+            <div>
+              <span className="eyebrow">Logística V2 · base certificada</span>
+              <h2 id="logistics-v2-title">{selectedLogisticsTypeLabel(logisticsType)}</h2>
+              <p>Tempos reais entre pagamento, início do transporte e entrega, com fila operacional separada do histórico.</p>
+            </div>
+            <div className="logistics-command-actions">
+              <div className="logistics-mode-tabs" role="group" aria-label="Filtrar modalidade logística">
+                {logisticsTypeOptions.map((option) => (
+                  <button
+                    type="button"
+                    key={option.value}
+                    className={logisticsType === option.value ? "active" : ""}
+                    aria-pressed={logisticsType === option.value}
+                    onClick={() => onLogisticsTypeChange(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <span className="logistics-last-sync">
+                Último sucesso: <strong>{formatLogisticsV2Timestamp(health.lastSuccessAt)}</strong>
+              </span>
+            </div>
+          </div>
+          <div className="logistics-v2-status-row" role="status">
+            <span className={`status-badge ${healthIsGood ? "status-good" : "status-warning"}`}>
+              {healthIsGood ? "Carga saudável" : "Carga requer atenção"}
+            </span>
+            <span>{formatNumber(health.qualityIssues)} problemas de qualidade</span>
+            <span>{formatNumber(health.unclassifiedLogisticTypes)} modalidades não classificadas</span>
+            <span>Execução: {health.latestRunStatus ?? "sem registro"}</span>
+          </div>
+        </section>
+
+        {!logistics.available ? (
+          <section className="panel logistics-v2-unavailable">
+            <AlertTriangle size={22} aria-hidden="true" />
+            <div>
+              <h2>Logística V2 temporariamente indisponível</h2>
+              <p>{logistics.message ?? "As visões certificadas não responderam nesta atualização."}</p>
+              <small>A V1 permanece intacta e pode ser reativada removendo a feature flag.</small>
+            </div>
+          </section>
+        ) : (
+          <>
+            {logistics.message ? (
+              <div className="context-banner">
+                <div><Database size={18} /><span>{logistics.message}</span></div>
+              </div>
+            ) : null}
+
+            <section className="kpi-grid logistics-v2-kpis">
+              <KpiCard
+                label="Envios da coorte"
+                value={formatNumber(current.shipments)}
+                detail={`${formatNumber(current.delivered)} entregues · ${formatNumber(current.open)} ainda abertos`}
+                icon={Truck}
+                tone="brand"
+                featured
+                comparison={{ current: current.shipments, previous: comparison?.shipments ?? null, periodDays: data.periodDays }}
+              />
+              <KpiCard
+                label="Sucesso de entrega"
+                value={formatTablePercent(current.deliverySuccessPercent)}
+                detail={`${formatNumber(current.delivered)} entregues de ${formatNumber(current.delivered + current.notDelivered)} resultados de entrega`}
+                icon={PackageCheck}
+                tone={current.notDelivered > 0 ? "warning" : "good"}
+                comparison={{ current: current.deliverySuccessPercent, previous: comparison?.deliverySuccessPercent ?? null, periodDays: data.periodDays }}
+              />
+              <KpiCard
+                label="Fila aberta agora"
+                value={formatNumber(backlog.total)}
+                detail={`${formatNumber(backlog.atLeast72Hours)} com 72 horas ou mais`}
+                icon={Activity}
+                tone={backlog.atLeast72Hours > 0 ? "warning" : "good"}
+              />
+              <KpiCard
+                label="Pagamento até entrega"
+                value={formatLogisticsV2Seconds(current.paidToDeliveryMedianSeconds)}
+                detail={`Mediana de ${formatNumber(current.paidToDeliveryBase)} envios elegíveis`}
+                icon={Gauge}
+                tone="neutral"
+              />
+            </section>
+
+            <section className="content-grid equal logistics-v2-time-grid">
+              <article className="panel">
+                <PanelTitle title="Tempos reais da jornada" subtitle="Mediana e percentil 90; cancelados e sequências inválidas ficam fora da base." />
+                <div className="logistics-v2-time-list">
+                  <div>
+                    <span>Pagamento → transporte</span>
+                    <strong>{formatLogisticsV2Seconds(current.paidToTransitMedianSeconds)}</strong>
+                    <small>P90 {formatLogisticsV2Seconds(current.paidToTransitP90Seconds)} · base {formatNumber(current.paidToTransitBase)}</small>
+                  </div>
+                  <div>
+                    <span>Transporte → entrega</span>
+                    <strong>{formatLogisticsV2Seconds(current.transitToDeliveryMedianSeconds)}</strong>
+                    <small>P90 {formatLogisticsV2Seconds(current.transitToDeliveryP90Seconds)} · base {formatNumber(current.transitToDeliveryBase)}</small>
+                  </div>
+                  <div>
+                    <span>Pagamento → entrega</span>
+                    <strong>{formatLogisticsV2Seconds(current.paidToDeliveryMedianSeconds)}</strong>
+                    <small>P90 {formatLogisticsV2Seconds(current.paidToDeliveryP90Seconds)} · base {formatNumber(current.paidToDeliveryBase)}</small>
+                  </div>
+                </div>
+              </article>
+
+              <article className="panel">
+                <PanelTitle title="Idade da fila atual" subtitle="Fotografia dos envios ainda abertos, independente do filtro histórico." action={<span className="tiny-label">Mais antigo: {formatLogisticsV2Seconds(backlog.oldestAgeSeconds)}</span>} />
+                <div className="logistics-v2-backlog-grid">
+                  <div><span>Até 24h</span><strong>{formatNumber(backlog.lessThan24Hours)}</strong></div>
+                  <div><span>24–48h</span><strong>{formatNumber(backlog.from24To48Hours)}</strong></div>
+                  <div><span>48–72h</span><strong>{formatNumber(backlog.from48To72Hours)}</strong></div>
+                  <div className={backlog.atLeast72Hours > 0 ? "is-warning" : ""}><span>72h ou mais</span><strong>{formatNumber(backlog.atLeast72Hours)}</strong></div>
+                </div>
+                <p className="logistics-v2-source-note">Fila atualizada em {formatLogisticsV2Timestamp(backlog.lastSyncedAt)}.</p>
+              </article>
+            </section>
+
+            <section className="panel table-panel">
+              <PanelTitle title="Resultados por modalidade" subtitle="A mesma definição de coorte e elegibilidade é aplicada a todas as modalidades." />
+              {logistics.modalities.length ? (
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Modalidade</th><th className="number-cell">Envios</th><th className="number-cell">Entregues</th><th className="number-cell">Abertos</th><th className="number-cell">Sucesso</th><th className="number-cell">Mediana total</th></tr></thead>
+                    <tbody>
+                      {logistics.modalities.map((row) => (
+                        <tr key={row.logisticType}>
+                          <td className="primary-cell">{logisticsTypeLabel(row.logisticType)}</td>
+                          <td className="number-cell">{formatNumber(row.shipments)}</td>
+                          <td className="number-cell">{formatNumber(row.delivered)}</td>
+                          <td className="number-cell">{formatNumber(row.open)}</td>
+                          <td className="number-cell">{formatTablePercent(row.deliverySuccessPercent)}</td>
+                          <td className="number-cell primary-cell">{formatLogisticsV2Seconds(row.paidToDeliveryMedianSeconds)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <p className="empty-table-message">Sem envios no período selecionado.</p>}
+            </section>
+
+            <section className="panel logistics-v2-daily-panel">
+              <PanelTitle title="Volume diário da coorte" subtitle="Cada envio aparece no dia em que o pedido foi pago." action={<span className="tiny-label">{logistics.daily.length} dias com movimento</span>} />
+              {logistics.daily.length ? (
+                <div className="logistics-v2-daily" role="img" aria-label="Volume de envios por dia">
+                  {logistics.daily.map((point) => (
+                    <div key={point.date} className="logistics-v2-daily-column" title={`${formatDate(point.date)}: ${point.shipments} envios`}>
+                      <strong>{formatNumber(point.shipments)}</strong>
+                      <div><span style={{ height: `${Math.max((point.shipments / maxDailyShipments) * 100, 4)}%` }} /></div>
+                      <small>{formatDate(point.date).slice(0, 5)}</small>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="empty-table-message">Sem volume diário no período.</p>}
+            </section>
+          </>
+        )}
+      </>
+    );
+  }
   
   function LogisticsView({
     data,
@@ -2460,14 +2656,23 @@
           return <TrafficView data={dashboardData} />;
         case "logistics":
           return (
-            <LogisticsView
-              data={dashboardData}
-              logisticsType={logisticsType}
-              onLogisticsTypeChange={(value) => {
-                setIsRefreshing(true);
-                setLogisticsType(value);
-              }}
-            />
+            dashboardData.logisticsV2.enabled
+              ? <LogisticsV2View
+                  data={dashboardData}
+                  logisticsType={logisticsType}
+                  onLogisticsTypeChange={(value) => {
+                    setIsRefreshing(true);
+                    setLogisticsType(value);
+                  }}
+                />
+              : <LogisticsView
+                  data={dashboardData}
+                  logisticsType={logisticsType}
+                  onLogisticsTypeChange={(value) => {
+                    setIsRefreshing(true);
+                    setLogisticsType(value);
+                  }}
+                />
           );
         case "seller":
           return <SellerView data={dashboardData} />;
