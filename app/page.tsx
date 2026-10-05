@@ -2823,6 +2823,7 @@
               <button key={id} className={activeView === id ? "active" : ""} onClick={() => changeView(id)}>
                 <Icon size={18} strokeWidth={1.8} />
                 <span>{label}</span>
+                {id === "returns" && returnsPayload.demo ? <small className="returns-demo-tag">Fictício</small> : null}
               </button>
             ))}
           </nav>

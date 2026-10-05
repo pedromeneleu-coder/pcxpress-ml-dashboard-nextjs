@@ -159,9 +159,17 @@ function salesPeriodFilter(window: ReturnsWindow): Record<string, string> {
     : { and: `(data_venda.gte.${window.currentStart},data_venda.lte.${window.currentEnd})` };
 }
 
-function isDemoModeEnabled(): boolean {
-  // Somente local: nunca liga em build de produção (Vercel), mesmo com a variável.
-  return process.env.RETURNS_DEMO_MODE === "true" && process.env.NODE_ENV !== "production";
+/**
+ * Quando os dados fictícios aparecem:
+ * - site oficial na Vercel (VERCEL_ENV=production): NUNCA, mesmo com a variável;
+ * - links de prévia da Vercel (VERCEL_ENV=preview): SIM por padrão, para mostrar
+ *   o layout online; desliga com RETURNS_DEMO_MODE=false nas variáveis da Vercel;
+ * - computador local: só com RETURNS_DEMO_MODE=true no .env.local.
+ */
+export function isDemoModeEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  if (env.VERCEL_ENV === "production") return false;
+  if (env.VERCEL_ENV === "preview") return env.RETURNS_DEMO_MODE !== "false";
+  return env.RETURNS_DEMO_MODE === "true";
 }
 
 export async function getReturnsData(window: ReturnsWindow): Promise<ReturnsPayload> {

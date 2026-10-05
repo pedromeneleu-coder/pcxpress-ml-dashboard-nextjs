@@ -734,3 +734,10 @@ h3,
 .returns-show-all { margin-top: 12px; }
 .returns-trend { max-width: 100%; white-space: normal; line-height: 1.35; align-items: flex-start; }
 .returns-trend svg { flex: 0 0 auto; }
+.returns-demo-banner { position: sticky; top: 78px; z-index: 15; display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; padding: 13px 16px; border: 2px solid #e39a19; border-radius: 7px; background: #fff3dc; color: #6b4705; box-shadow: 0 6px 18px rgba(16, 17, 20, .08); }
+.returns-demo-banner svg { flex: 0 0 auto; margin-top: 1px; color: #a76c06; }
+.returns-demo-banner strong { display: block; font-size: 13px; letter-spacing: .02em; }
+.returns-demo-banner span { display: block; margin-top: 3px; font-size: 11px; line-height: 1.45; }
+.returns-demo .kpi-card, .returns-demo .panel { border-style: dashed; border-color: #e7c27c; }
+.returns-demo-tag { display: inline-block; margin: 0 6px 0 0; padding: 2px 6px; border-radius: 4px; background: #fff3dc; color: #a76c06; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; vertical-align: middle; }
+.sidebar nav button .returns-demo-tag { margin: 0 0 0 auto; background: #3a2a0c; color: #f4c56f; }
