@@ -253,7 +253,7 @@ type LogisticsV2HealthRecord = {
   seconds_since_last_success: number | string | null;
 };
 
-type SupabaseConfig = {
+export type SupabaseConfig = {
   url: string;
   key: string;
   schema: string;
@@ -320,7 +320,7 @@ function logisticsPolicyTypeQuery(logisticsType: LogisticsTypeFilter): Record<st
     : {};
 }
 
-function readConfig(): SupabaseConfig | null {
+export function readConfig(): SupabaseConfig | null {
   const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -336,7 +336,7 @@ function readConfig(): SupabaseConfig | null {
   };
 }
 
-function toNumber(value: number | string | null | undefined): number {
+export function toNumber(value: number | string | null | undefined): number {
   if (value === null || value === undefined || value === "") {
     return 0;
   }
@@ -345,7 +345,7 @@ function toNumber(value: number | string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function toNullableNumber(value: number | string | null | undefined): number | null {
+export function toNullableNumber(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined || value === "") {
     return null;
   }
@@ -646,7 +646,7 @@ async function supabaseFetch<T>(
   return response.json() as Promise<T>;
 }
 
-async function fetchAll<T>(config: SupabaseConfig, path: string): Promise<T[]> {
+export async function fetchAll<T>(config: SupabaseConfig, path: string): Promise<T[]> {
   const rows: T[] = [];
 
   for (let from = 0; ; from += PAGE_SIZE) {
@@ -673,7 +673,7 @@ async function optionalFetchAll<T>(config: SupabaseConfig, path: string): Promis
   }
 }
 
-async function optionalFetchAllWithAvailability<T>(
+export async function optionalFetchAllWithAvailability<T>(
   config: SupabaseConfig,
   path: string,
 ): Promise<OptionalFetchResult<T>> {
@@ -855,7 +855,7 @@ function buildLogisticsDataHealth(
   };
 }
 
-function appendQuery(path: string, params: Record<string, string | number>): string {
+export function appendQuery(path: string, params: Record<string, string | number>): string {
   const urlParams = new URLSearchParams();
 
   for (const [key, value] of Object.entries(params)) {
@@ -865,7 +865,7 @@ function appendQuery(path: string, params: Record<string, string | number>): str
   return `${path}?${urlParams.toString()}`;
 }
 
-async function getAccount(config: SupabaseConfig): Promise<AccountRow | null> {
+export async function getAccount(config: SupabaseConfig): Promise<AccountRow | null> {
   const rows = await supabaseFetch<AccountRow[]>(
     config,
     appendQuery("accounts", {

@@ -26,6 +26,7 @@
     Store,
     TrendingUp,
     Truck,
+    Undo2,
     Users,
     X,
     Zap,
@@ -39,8 +40,11 @@
     type LogisticsDataHealth,
     type LogisticsTypeFilter,
   } from "./dashboard-types";
+  import { ReturnsOverviewAlerts, ReturnsView } from "./returns/ReturnsView";
+  import { emptyReturnsPayload } from "./returns/returns-metrics";
+  import type { ReturnsPayload } from "./returns/returns-types";
   
-  type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "logistics" | "seller";
+  type ViewId = "overview" | "sales" | "products" | "performance" | "traffic" | "logistics" | "seller" | "returns";
   
   const navItems = [
     { id: "overview", label: "Visão geral", icon: LayoutDashboard },
@@ -49,6 +53,7 @@
     { id: "performance", label: "Desempenho", icon: BarChart3 },
     { id: "traffic", label: "Tráfego e conversão", icon: Eye },
     { id: "seller", label: "Saúde da conta", icon: ShieldCheck },
+    { id: "returns", label: "Devoluções", icon: Undo2 },
   ] as const;
   
   const viewMeta: Record<ViewId, { title: string; description: string }> = {
@@ -79,6 +84,10 @@
     seller: {
       title: "Saúde da conta",
       description: "Reputação, reclamações, atrasos e cancelamentos da conta PCXpress.",
+    },
+    returns: {
+      title: "Devoluções",
+      description: "Pedidos devolvidos depois da entrega: acompanhamento das devoluções em aberto e fechamento por mês da venda.",
     },
   };
   
@@ -835,7 +844,7 @@
     );
   }
   
-  function OverviewView({ data }: { data: DashboardData }) {
+  function OverviewView({ data, returns }: { data: DashboardData; returns: ReturnsPayload }) {
     const accountConversion = data.sales.conversionRatePercent;
     const unitsPerOrder = data.sales.ordersCount > 0 ? data.sales.unitsSold / data.sales.ordersCount : null;
     const previousUnitsPerOrder = data.comparison.sales && data.comparison.sales.ordersCount > 0
@@ -1027,6 +1036,7 @@
                   <small>{decliningProducts.length ? `Comparação contra ${comparisonRangeText(data)}.` : "A leitura será refinada conforme o histórico comparável crescer."}</small>
                 </div>
               </li>
+              <ReturnsOverviewAlerts payload={returns} />
             </ul>
           </article>
         </section>
@@ -2590,6 +2600,8 @@
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [refreshNonce, setRefreshNonce] = useState(0);
     const [logisticsType, setLogisticsType] = useState<LogisticsTypeFilter>("all");
+    const [returnsData, setReturnsData] = useState<ReturnsPayload | null>(null);
+    const [loadedReturnsKey, setLoadedReturnsKey] = useState<string | null>(null);
     const activeMeta = viewMeta[activeView];
     const periodDays = periodToDays(period);
     const dashboardQuery = useMemo(() => {
@@ -2643,6 +2655,53 @@
   
       return () => controller.abort();
     }, [appliedFilter, dashboardQuery, periodDays, refreshNonce]);
+
+    // Devoluções usam o mesmo período já resolvido pelo painel principal.
+    const { currentStart, currentEnd, comparisonStart, comparisonEnd } = dashboardData.dateSelection;
+    const returnsWindow = useMemo(
+      () => ({ currentStart, currentEnd, comparisonStart, comparisonEnd }),
+      [currentStart, currentEnd, comparisonStart, comparisonEnd],
+    );
+    const returnsWindowKey = [currentStart, currentEnd, comparisonStart ?? "", comparisonEnd ?? "", refreshNonce].join("|");
+    const returnsLoading = loadedReturnsKey !== returnsWindowKey;
+    const returnsPayload = useMemo(
+      () => returnsData ?? emptyReturnsPayload(returnsWindow),
+      [returnsData, returnsWindow],
+    );
+
+    useEffect(() => {
+      const controller = new AbortController();
+      const params = new URLSearchParams({
+        currentStart: returnsWindow.currentStart,
+        currentEnd: returnsWindow.currentEnd,
+      });
+
+      if (returnsWindow.comparisonStart && returnsWindow.comparisonEnd) {
+        params.set("comparisonStart", returnsWindow.comparisonStart);
+        params.set("comparisonEnd", returnsWindow.comparisonEnd);
+      }
+
+      fetch(`/api/returns?${params.toString()}`, { signal: controller.signal, cache: "no-store" })
+        .then((response) => {
+          if (!response.ok) throw new Error("Não foi possível carregar as devoluções.");
+          return response.json() as Promise<ReturnsPayload>;
+        })
+        .then((payload) => setReturnsData(payload))
+        .catch((error) => {
+          if (!(error instanceof DOMException && error.name === "AbortError")) {
+            setReturnsData(emptyReturnsPayload(
+              returnsWindow,
+              "error",
+              error instanceof Error ? error.message : "Erro ao carregar devoluções.",
+            ));
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoadedReturnsKey(returnsWindowKey);
+        });
+
+      return () => controller.abort();
+    }, [returnsWindow, returnsWindowKey]);
   
     const content = useMemo(() => {
       switch (activeView) {
@@ -2676,10 +2735,12 @@
           );
         case "seller":
           return <SellerView data={dashboardData} />;
+        case "returns":
+          return <ReturnsView payload={returnsPayload} loading={returnsLoading} />;
         default:
-          return <OverviewView data={dashboardData} />;
+          return <OverviewView data={dashboardData} returns={returnsPayload} />;
       }
-    }, [activeView, dashboardData, logisticsType]);
+    }, [activeView, dashboardData, logisticsType, returnsPayload, returnsLoading]);
   
     function changeView(view: ViewId) {
       setActiveView(view);
