@@ -96,9 +96,11 @@ export function buildDemoReturnsPayload(window: ReturnsWindow): ReturnsPayload {
     const finished = [4, 5, 4, 5, 6];
     const pathIndex = reason.family === "PNR"
       ? 6
-      : ageDays > 25
-        ? random() < 0.06 ? Math.floor(random() * 4) : finished[Math.floor(random() * finished.length)]
-        : Math.floor(random() * Math.min(6, 1 + ageDays / 4));
+      : ageDays > 45
+        ? finished[Math.floor(random() * finished.length)]
+        : ageDays > 20
+          ? random() < 0.3 ? Math.floor(random() * 4) : finished[Math.floor(random() * finished.length)]
+          : Math.floor(random() * Math.min(6, 1 + ageDays / 4));
     const path = PATHS[pathIndex].filter((step) => openedTime + step.offsetDays * DAY_MS <= now);
     const steps = path.length ? path : [PATHS[0][0]];
     const last = steps[steps.length - 1];

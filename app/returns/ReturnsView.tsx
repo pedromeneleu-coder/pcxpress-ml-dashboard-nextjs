@@ -690,11 +690,17 @@ export function ReturnsView({ payload, loading }: { payload: ReturnsPayload; loa
   }
 
   return (
-    <>
+    <div className={payload.demo ? "returns-section returns-demo" : "returns-section"}>
       {payload.demo ? (
-        <div className="returns-note demo">
-          <AlertTriangle size={15} />
-          Modo demonstração: dados fictícios gerados localmente. Nada disso vem do Supabase nem representa a PCXpress.
+        <div className="returns-demo-banner" role="note">
+          <AlertTriangle size={18} />
+          <div>
+            <strong>DADOS FICTÍCIOS — demonstração do layout</strong>
+            <span>
+              Todos os números, pedidos e anúncios desta seção são inventados para mostrar como a tela vai funcionar.
+              Não são devoluções reais da PCXpress e não vêm do Mercado Livre nem do Supabase.
+            </span>
+          </div>
         </div>
       ) : null}
 
@@ -726,7 +732,7 @@ export function ReturnsView({ payload, loading }: { payload: ReturnsPayload; loa
       {tab === "tracking"
         ? <TrackingView payload={payload} filters={filters} />
         : <ClosingView payload={payload} filters={filters} />}
-    </>
+    </div>
   );
 }
 
@@ -742,6 +748,8 @@ export function ReturnsOverviewAlerts({ payload }: { payload: ReturnsPayload }) 
 
   if (!alerts.visible) return null;
 
+  const demoTag = payload.demo ? <span className="returns-demo-tag">Fictício</span> : null;
+
   return (
     <>
       <li>
@@ -750,6 +758,7 @@ export function ReturnsOverviewAlerts({ payload }: { payload: ReturnsPayload }) 
         </span>
         <div>
           <strong>
+            {demoTag}
             {alerts.stalledCount
               ? `${formatNumber(alerts.stalledCount)} ${alerts.stalledCount === 1 ? "devolução parada" : "devoluções paradas"} há mais de ${STALLED_DAYS_THRESHOLD} dias`
               : "Nenhuma devolução parada"}
@@ -763,7 +772,7 @@ export function ReturnsOverviewAlerts({ payload }: { payload: ReturnsPayload }) 
             <AlertTriangle size={17} />
           </span>
           <div>
-            <strong>Alta de devoluções por erro operacional</strong>
+            <strong>{demoTag}Alta de devoluções por erro operacional</strong>
             <small>
               {formatPercent(alerts.operationalError.currentPercent)} no período contra {formatPercent(alerts.operationalError.comparisonPercent)} na comparação.
             </small>

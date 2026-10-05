@@ -198,7 +198,9 @@ test("seção Devoluções entra no menu sem alterar as demais e mantém regras 
   assert.match(page, /<ReturnsOverviewAlerts payload=\{returns\} \/>/);
   assert.match(config, /export const RETURN_STATUS_TO_STAGE/);
   assert.match(config, /export const STALLED_DAYS_THRESHOLD = 7;/);
-  assert.match(server, /RETURNS_DEMO_MODE === "true" && process\.env\.NODE_ENV !== "production"/);
+  assert.match(server, /if \(env\.VERCEL_ENV === "production"\) return false;/);
+  assert.match(server, /if \(env\.VERCEL_ENV === "preview"\) return env\.RETURNS_DEMO_MODE !== "false";/);
+  assert.match(server, /return env\.RETURNS_DEMO_MODE === "true";/);
   assert.doesNotMatch(server, /SUPABASE_SERVICE_ROLE_KEY|NEXT_PUBLIC_/);
   assert.match(view, /Aguardando dados de devoluções/);
   assert.match(view, /Aguardando classificação dos motivos/);
