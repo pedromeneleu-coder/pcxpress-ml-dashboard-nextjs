@@ -17,6 +17,10 @@ import {
   type LogisticsSlaSummary,
   type LogisticsStageSummary,
   type LogisticsTypeFilter,
+  type LogisticsV2Data,
+  type LogisticsV2DailyPoint,
+  type LogisticsV2ModalitySummary,
+  type LogisticsV2Summary,
   type ComparisonMode,
   type ProductComparison,
   type ProductPeriodMetrics,
@@ -212,6 +216,43 @@ type LogisticsSyncRunRecord = {
   error_message: string | null;
 };
 
+type LogisticsV2FactRecord = {
+  shipment_id: string;
+  logistic_type: string | null;
+  current_status: string | null;
+  outcome: "delivered" | "not_delivered" | "cancelled" | "open" | string;
+  cohort_date: string | null;
+  paid_to_transit_seconds: number | string | null;
+  transit_to_delivery_seconds: number | string | null;
+  paid_to_delivery_seconds: number | string | null;
+  eligible_paid_to_transit: boolean;
+  eligible_transit_to_delivery: boolean;
+  eligible_paid_to_delivery: boolean;
+  data_quality_status: string;
+  last_synced_at: string | null;
+};
+
+type LogisticsV2BacklogRecord = {
+  shipment_id: string;
+  logistic_type: string | null;
+  current_status: string | null;
+  age_seconds: number | string | null;
+  age_bucket: "lt_24h" | "24_48h" | "48_72h" | "gte_72h" | "unknown" | string;
+  data_quality_status: string;
+  last_synced_at: string | null;
+};
+
+type LogisticsV2HealthRecord = {
+  shipments: number | string | null;
+  open_shipments: number | string | null;
+  quality_issues: number | string | null;
+  unclassified_logistic_types: number | string | null;
+  latest_run_status: string | null;
+  latest_run_finished_at: string | null;
+  last_success_at: string | null;
+  seconds_since_last_success: number | string | null;
+};
+
 type SupabaseConfig = {
   url: string;
   key: string;
@@ -241,6 +282,10 @@ const LOGISTICS_TYPE_VALUES: Record<Exclude<LogisticsTypeFilter, "all">, readonl
   cross_docking: ["cross_docking"],
   flex: ["self_service", "flex"],
 };
+
+function logisticsV2Enabled() {
+  return process.env.LOGISTICS_V2_ENABLED?.toLowerCase() === "true";
+}
 
 export type DashboardDateQuery = {
   periodDays?: number;
@@ -307,6 +352,122 @@ function toNullableNumber(value: number | string | null | undefined): number | n
 
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function percentile(values: number[], quantile: number): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const position = (sorted.length - 1) * quantile;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
+  const weight = position - lower;
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+}
+
+function numericValues(
+  records: LogisticsV2FactRecord[],
+  key: "paid_to_transit_seconds" | "transit_to_delivery_seconds" | "paid_to_delivery_seconds",
+  eligible: "eligible_paid_to_transit" | "eligible_transit_to_delivery" | "eligible_paid_to_delivery",
+) {
+  return records
+    .filter((record) => record[eligible])
+    .map((record) => toNullableNumber(record[key]))
+    .filter((value): value is number => value !== null && value >= 0);
+}
+
+function buildLogisticsV2Summary(records: LogisticsV2FactRecord[]): LogisticsV2Summary {
+  const delivered = records.filter((record) => record.outcome === "delivered").length;
+  const notDelivered = records.filter((record) => record.outcome === "not_delivered").length;
+  const cancelled = records.filter((record) => record.outcome === "cancelled").length;
+  const open = records.filter((record) => record.outcome === "open").length;
+  const deliveryBase = delivered + notDelivered;
+  const paidToTransit = numericValues(records, "paid_to_transit_seconds", "eligible_paid_to_transit");
+  const transitToDelivery = numericValues(records, "transit_to_delivery_seconds", "eligible_transit_to_delivery");
+  const paidToDelivery = numericValues(records, "paid_to_delivery_seconds", "eligible_paid_to_delivery");
+
+  return {
+    shipments: records.length,
+    delivered,
+    notDelivered,
+    cancelled,
+    open,
+    deliverySuccessPercent: deliveryBase ? delivered / deliveryBase * 100 : null,
+    paidToTransitBase: paidToTransit.length,
+    transitToDeliveryBase: transitToDelivery.length,
+    paidToDeliveryBase: paidToDelivery.length,
+    paidToTransitMedianSeconds: percentile(paidToTransit, 0.5),
+    paidToTransitP90Seconds: percentile(paidToTransit, 0.9),
+    transitToDeliveryMedianSeconds: percentile(transitToDelivery, 0.5),
+    transitToDeliveryP90Seconds: percentile(transitToDelivery, 0.9),
+    paidToDeliveryMedianSeconds: percentile(paidToDelivery, 0.5),
+    paidToDeliveryP90Seconds: percentile(paidToDelivery, 0.9),
+  };
+}
+
+function buildLogisticsV2Modalities(records: LogisticsV2FactRecord[]): LogisticsV2ModalitySummary[] {
+  const grouped = new Map<string, LogisticsV2FactRecord[]>();
+  for (const record of records) {
+    const key = record.logistic_type ?? "unknown";
+    grouped.set(key, [...(grouped.get(key) ?? []), record]);
+  }
+  return [...grouped.entries()]
+    .map(([logisticType, rows]) => ({ logisticType, ...buildLogisticsV2Summary(rows) }))
+    .sort((left, right) => right.shipments - left.shipments);
+}
+
+function buildLogisticsV2Daily(records: LogisticsV2FactRecord[]): LogisticsV2DailyPoint[] {
+  const grouped = new Map<string, LogisticsV2FactRecord[]>();
+  for (const record of records) {
+    if (!record.cohort_date) continue;
+    grouped.set(record.cohort_date, [...(grouped.get(record.cohort_date) ?? []), record]);
+  }
+  return [...grouped.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, rows]) => {
+      const summary = buildLogisticsV2Summary(rows);
+      return {
+        date,
+        shipments: summary.shipments,
+        delivered: summary.delivered,
+        open: summary.open,
+        deliverySuccessPercent: summary.deliverySuccessPercent,
+      };
+    });
+}
+
+function buildLogisticsV2Backlog(records: LogisticsV2BacklogRecord[]): LogisticsV2Data["backlog"] {
+  const ages = records
+    .map((record) => toNullableNumber(record.age_seconds))
+    .filter((value): value is number => value !== null && value >= 0);
+  const synced = records
+    .map((record) => record.last_synced_at)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  const countBucket = (bucket: string) => records.filter((record) => record.age_bucket === bucket).length;
+  return {
+    total: records.length,
+    lessThan24Hours: countBucket("lt_24h"),
+    from24To48Hours: countBucket("24_48h"),
+    from48To72Hours: countBucket("48_72h"),
+    atLeast72Hours: countBucket("gte_72h"),
+    unknownAge: countBucket("unknown"),
+    oldestAgeSeconds: ages.length ? Math.max(...ages) : null,
+    lastSyncedAt: synced.at(-1) ?? null,
+  };
+}
+
+function buildLogisticsV2Health(record?: LogisticsV2HealthRecord): LogisticsV2Data["health"] {
+  return {
+    shipments: toNumber(record?.shipments),
+    openShipments: toNumber(record?.open_shipments),
+    qualityIssues: toNumber(record?.quality_issues),
+    unclassifiedLogisticTypes: toNumber(record?.unclassified_logistic_types),
+    latestRunStatus: record?.latest_run_status ?? null,
+    latestRunFinishedAt: record?.latest_run_finished_at ?? null,
+    lastSuccessAt: record?.last_success_at ?? null,
+    secondsSinceLastSuccess: toNullableNumber(record?.seconds_since_last_success),
+  };
 }
 
 function startDateForPeriod(anchorDate: string, periodDays: number): string {
@@ -436,6 +597,14 @@ function fallbackForQuery(query: DashboardDateQuery, message?: string): Dashboar
           })),
         },
       },
+    },
+    logisticsV2: {
+      ...FALLBACK_DASHBOARD_DATA.logisticsV2,
+      enabled: logisticsV2Enabled(),
+      message: logisticsV2Enabled()
+        ? "As visões certificadas da Logística V2 não estão disponíveis nesta atualização."
+        : FALLBACK_DASHBOARD_DATA.logisticsV2.message,
+      selectedLogisticsType,
     },
   };
 }
@@ -1219,16 +1388,6 @@ function buildLogisticsSlaBreakdown(records: LogisticsSlaRecord[]): LogisticsSla
     .sort((a, b) => b.shipmentsCount - a.shipmentsCount || a.eventName.localeCompare(b.eventName));
 }
 
-function percentile(values: number[], ratio: number): number | null {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const position = (sorted.length - 1) * ratio;
-  const lower = Math.floor(position);
-  const upper = Math.ceil(position);
-  if (lower === upper) return sorted[lower];
-  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
-}
-
 function buildLogisticsStages(records: LogisticsStageRecord[]): LogisticsStageSummary[] {
   const groups = new Map<string, LogisticsStageRecord[]>();
 
@@ -1508,11 +1667,23 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       : {
           and: `(sale_date.gte.${dateSelection.currentStart},sale_date.lte.${dateSelection.currentEnd})`,
         };
+    const logisticsV2PeriodFilter: Record<string, string> = hasComparison
+      ? {
+          or: `(and(cohort_date.gte.${dateSelection.currentStart},cohort_date.lte.${dateSelection.currentEnd}),and(cohort_date.gte.${dateSelection.comparisonStart},cohort_date.lte.${dateSelection.comparisonEnd}))`,
+        }
+      : {
+          and: `(cohort_date.gte.${dateSelection.currentStart},cohort_date.lte.${dateSelection.currentEnd})`,
+        };
     const reconciliationPeriodFilter = {
       and: `(sale_date.gte.${dateSelection.currentStart},sale_date.lte.${dateSelection.currentEnd})`,
     };
     const selectedLogisticsTypeQuery = logisticsTypeQuery(selectedLogisticsType);
     const selectedLogisticsPolicyTypeQuery = logisticsPolicyTypeQuery(selectedLogisticsType);
+    // A seção de Logística foi retirada. Manter as consultas desligadas evita
+    // chamadas aos objetos exclusivos que serão removidos do Supabase, sem alterar
+    // a carga das demais abas.
+    const logisticsEnabled = false;
+    const useLogisticsV2 = logisticsEnabled && logisticsV2Enabled();
     const [
       catalogRecords,
       summaryRecords,
@@ -1528,6 +1699,9 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
       logisticsPolicyResult,
       logisticsStageResult,
       logisticsSyncRunsResult,
+      logisticsV2FactsResult,
+      logisticsV2BacklogResult,
+      logisticsV2HealthResult,
     ] = await Promise.all([
       fetchAll<CatalogRecord>(
         config,
@@ -1585,7 +1759,7 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           order: "performance_date.asc",
         }),
       ),
-      optionalFetchAllWithAvailability<LogisticsSlaRecord>(
+      logisticsEnabled ? optionalFetchAllWithAvailability<LogisticsSlaRecord>(
         config,
         appendQuery("dashboard_daily_logistics_sla", {
           select:
@@ -1595,8 +1769,8 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           ...logisticsPeriodFilter,
           order: "sale_date.asc",
         }),
-      ),
-      optionalFetchAllWithAvailability<LogisticsReconciliationRecord>(
+      ) : Promise.resolve({ available: false, rows: [] as LogisticsSlaRecord[] }),
+      logisticsEnabled ? optionalFetchAllWithAvailability<LogisticsReconciliationRecord>(
         config,
         appendQuery("dashboard_daily_logistics_reconciliation_waterfall", {
           select:
@@ -1608,8 +1782,8 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           ...reconciliationPeriodFilter,
           order: "sale_date.asc,reconciliation_order.asc",
         }),
-      ),
-      optionalFetchAllWithAvailability<LogisticsSlaRecord>(
+      ) : Promise.resolve({ available: false, rows: [] as LogisticsReconciliationRecord[] }),
+      logisticsEnabled ? optionalFetchAllWithAvailability<LogisticsSlaRecord>(
         config,
         appendQuery("dashboard_daily_logistics_sla", {
           select:
@@ -1620,8 +1794,8 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           ...selectedLogisticsTypeQuery,
           order: "sale_date.asc",
         }),
-      ),
-      optionalFetchAllWithAvailability<LogisticsEconomicsRecord>(
+      ) : Promise.resolve({ available: false, rows: [] as LogisticsSlaRecord[] }),
+      logisticsEnabled ? optionalFetchAllWithAvailability<LogisticsEconomicsRecord>(
         config,
         appendQuery("dashboard_daily_logistics_economics", {
           select:
@@ -1630,15 +1804,15 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           ...logisticsPeriodFilter,
           order: "sale_date.asc",
         }),
-      ),
-      optionalFetchAllWithAvailability<FulfillmentInventoryRecord>(
+      ) : Promise.resolve({ available: false, rows: [] as LogisticsEconomicsRecord[] }),
+      logisticsEnabled ? optionalFetchAllWithAvailability<FulfillmentInventoryRecord>(
         config,
         appendQuery("dashboard_fulfillment_inventory", {
           select: "inventory_id,total_quantity,available_quantity,not_available_quantity,synced_at",
           account_id: accountFilter,
         }),
-      ),
-      optionalFetchAllWithAvailability<LogisticsSlaPolicyRecord>(
+      ) : Promise.resolve({ available: false, rows: [] as FulfillmentInventoryRecord[] }),
+      logisticsEnabled ? optionalFetchAllWithAvailability<LogisticsSlaPolicyRecord>(
         config,
         appendQuery("logistics_sla_policies", {
           select: "policy_name,logistic_type,start_event_code,end_event_code,target_minutes,valid_from,valid_to",
@@ -1648,8 +1822,8 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           ...selectedLogisticsPolicyTypeQuery,
           order: "policy_name.asc",
         }),
-      ),
-      optionalFetchAllWithAvailability<LogisticsStageRecord>(
+      ) : Promise.resolve({ available: false, rows: [] as LogisticsSlaPolicyRecord[] }),
+      logisticsEnabled ? optionalFetchAllWithAvailability<LogisticsStageRecord>(
         config,
         appendQuery("dashboard_logistics_stage_times", {
           select:
@@ -1659,8 +1833,8 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           ...logisticsPeriodFilter,
           order: "sale_date.asc,stage_order.asc",
         }),
-      ),
-      optionalFetchAllWithAvailability<LogisticsSyncRunRecord>(
+      ) : Promise.resolve({ available: false, rows: [] as LogisticsStageRecord[] }),
+      logisticsEnabled ? optionalFetchAllWithAvailability<LogisticsSyncRunRecord>(
         config,
         appendQuery("sync_runs", {
           select: "workflow_name,status,started_at,finished_at,error_message",
@@ -1669,7 +1843,43 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           order: "started_at.desc",
           limit: 100,
         }),
-      ),
+      ) : Promise.resolve({ available: false, rows: [] as LogisticsSyncRunRecord[] }),
+      useLogisticsV2
+        ? optionalFetchAllWithAvailability<LogisticsV2FactRecord>(
+            config,
+            appendQuery("dashboard_logistics_v2_facts", {
+              select:
+                "shipment_id,logistic_type,current_status,outcome,cohort_date,paid_to_transit_seconds,transit_to_delivery_seconds,paid_to_delivery_seconds,eligible_paid_to_transit,eligible_transit_to_delivery,eligible_paid_to_delivery,data_quality_status,last_synced_at",
+              account_id: accountFilter,
+              ...selectedLogisticsTypeQuery,
+              ...logisticsV2PeriodFilter,
+              order: "cohort_date.asc,shipment_id.asc",
+            }),
+          )
+        : Promise.resolve({ available: false, rows: [] as LogisticsV2FactRecord[] }),
+      useLogisticsV2
+        ? optionalFetchAllWithAvailability<LogisticsV2BacklogRecord>(
+            config,
+            appendQuery("dashboard_logistics_v2_backlog_current", {
+              select:
+                "shipment_id,logistic_type,current_status,age_seconds,age_bucket,data_quality_status,last_synced_at",
+              account_id: accountFilter,
+              ...selectedLogisticsTypeQuery,
+              order: "age_seconds.desc",
+            }),
+          )
+        : Promise.resolve({ available: false, rows: [] as LogisticsV2BacklogRecord[] }),
+      useLogisticsV2
+        ? optionalFetchAllWithAvailability<LogisticsV2HealthRecord>(
+            config,
+            appendQuery("dashboard_logistics_v2_data_health", {
+              select:
+                "shipments,open_shipments,quality_issues,unclassified_logistic_types,latest_run_status,latest_run_finished_at,last_success_at,seconds_since_last_success",
+              account_id: accountFilter,
+              limit: 1,
+            }),
+          )
+        : Promise.resolve({ available: false, rows: [] as LogisticsV2HealthRecord[] }),
     ]);
 
     const logisticsSlaRecords = logisticsSlaResult.rows;
@@ -1678,6 +1888,26 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
     const fulfillmentRecords = fulfillmentResult.rows;
     const logisticsPolicyRecords = logisticsPolicyResult.rows;
     const logisticsStageRecords = logisticsStageResult.rows;
+    const currentLogisticsV2Facts = logisticsV2FactsResult.rows.filter((record) =>
+      Boolean(
+        record.cohort_date
+        && record.cohort_date >= dateSelection.currentStart
+        && record.cohort_date <= dateSelection.currentEnd,
+      ),
+    );
+    const comparisonLogisticsV2Facts = logisticsV2FactsResult.rows.filter((record) =>
+      Boolean(
+        record.cohort_date
+        && dateSelection.comparisonStart
+        && dateSelection.comparisonEnd
+        && record.cohort_date >= dateSelection.comparisonStart
+        && record.cohort_date <= dateSelection.comparisonEnd,
+      ),
+    );
+    const logisticsV2Available = useLogisticsV2
+      && logisticsV2FactsResult.available
+      && logisticsV2BacklogResult.available
+      && logisticsV2HealthResult.available;
 
     const timestamps = catalogRecords
       .flatMap((record) => [record.synced_at, record.last_updated])
@@ -1977,6 +2207,26 @@ export async function getDashboardData(query: DashboardDateQuery = {}): Promise<
           },
           dataHealth: buildLogisticsDataHealth(checkedAt, dataHealthSources),
         },
+      },
+      logisticsV2: {
+        enabled: useLogisticsV2,
+        available: logisticsV2Available,
+        message: !useLogisticsV2
+          ? "Logística V2 protegida por feature flag."
+          : !logisticsV2Available
+            ? "Uma ou mais visões certificadas da Logística V2 não puderam ser consultadas."
+            : currentLogisticsV2Facts.length === 0
+              ? "Não há envios V2 para a modalidade e o período selecionados."
+              : null,
+        selectedLogisticsType,
+        current: buildLogisticsV2Summary(currentLogisticsV2Facts),
+        comparison: hasComparison
+          ? buildLogisticsV2Summary(comparisonLogisticsV2Facts)
+          : null,
+        modalities: buildLogisticsV2Modalities(currentLogisticsV2Facts),
+        daily: buildLogisticsV2Daily(currentLogisticsV2Facts),
+        backlog: buildLogisticsV2Backlog(logisticsV2BacklogResult.rows),
+        health: buildLogisticsV2Health(logisticsV2HealthResult.rows[0]),
       },
     };
   } catch (error) {
