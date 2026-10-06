@@ -83,11 +83,6 @@ export function saoPauloDate(value: string | null | undefined): string | null {
   return Number.isFinite(time) ? SAO_PAULO_DATE.format(new Date(time)) : null;
 }
 
-/** Último milissegundo de um dia AAAA-MM-DD em São Paulo (UTC−3, sem horário de verão). */
-export function endOfSaoPauloDay(date: string): number {
-  return Date.parse(`${date}T23:59:59.999-03:00`);
-}
-
 function inWindow(date: string | null, start: string | null, end: string | null): boolean {
   return Boolean(date && start && end && date >= start && date <= end);
 }
@@ -194,50 +189,15 @@ export function daysInStage(
   return Math.max(0, Math.floor((asOfTime - sinceTime) / DAY_MS));
 }
 
-function notAfter(value: string | null, cutoff: number): boolean {
-  const time = value ? Date.parse(value) : Number.NaN;
-  return Number.isFinite(time) && time <= cutoff;
-}
-
-/**
- * Reconstrói em que etapa a devolução estava num instante passado, para
- * comparar a posição atual com o fim do período de comparação.
- * Retorna null quando a devolução ainda não existia ou a etapa é desconhecida.
- */
-export function stageAt(
-  record: ReturnRecord,
-  events: ReturnStatusEvent[] = [],
-  cutoff: number,
-): ReturnStage | null {
-  const firstSeen = record.openedAt ?? events[0]?.occurredAt ?? null;
-  if (!notAfter(firstSeen, cutoff)) return null;
-
-  const before = events.filter((event) => notAfter(event.occurredAt, cutoff));
-  if (before.length) return before[before.length - 1].stage;
-
-  if (record.stage === "encerrada_sem_devolucao" && notAfter(record.lastUpdatedAt, cutoff)) {
-    return "encerrada_sem_devolucao";
-  }
-  if (notAfter(record.refundedAt, cutoff)) return "reembolsada";
-  if (notAfter(record.receivedAt, cutoff)) return "recebida";
-  if (notAfter(record.buyerShippedAt, cutoff)) return "enviada_pelo_comprador";
-  return "aberta";
-}
-
-function refundDate(record: ReturnRecord): string | null {
-  return saoPauloDate(
-    record.refundedAt ?? (record.stage === "reembolsada" ? record.lastUpdatedAt : null),
-  );
-}
-
 // -----------------------------------------------------------------------------
-// A. Acompanhamento
+// A. Acompanhamento (situação de hoje; não depende do filtro de datas)
 // -----------------------------------------------------------------------------
 
-export type StageCounter = {
-  current: number;
-  /** null quando não há período de comparação. */
-  comparison: number | null;
+export type OpenStageSummary = {
+  stage: ReturnStage;
+  count: number;
+  /** Paradas na etapa há mais dias que o limite configurado. */
+  stalled: number;
 };
 
 export type OpenReturnRow = {
@@ -255,41 +215,15 @@ export type OpenReturnRow = {
   stalled: boolean;
 };
 
-export type ReasonRow = {
-  reasonId: string;
-  name: string;
-  family: ReasonFamily | null;
-  current: number;
-  comparison: number | null;
-  sharePercent: number | null;
-};
-
-export type ListingRow = {
-  mlbId: string;
-  title: string | null;
-  current: number;
-  comparison: number | null;
-  units: number;
-  amount: number;
-};
-
 export type TrackingSummary = {
-  counters: {
-    open: StageCounter;
-    inTransit: StageCounter;
-    awaitingReview: StageCounter;
-    refunded: StageCounter;
-  };
-  openedInPeriod: StageCounter;
-  /** Data (AAAA-MM-DD) usada como "posição anterior" dos contadores atuais. */
-  comparisonCutoffDate: string | null;
-  funnel: { stage: ReturnStage; label: string; count: number }[];
-  funnelUnmapped: number;
-  funnelTotal: number;
-  openRows: OpenReturnRow[];
+  /** Uma entrada por etapa em aberto, na ordem do fluxo. */
+  stages: OpenStageSummary[];
+  totalOpen: number;
+  /** Devoluções com status ainda não traduzido para uma etapa. */
+  unmappedOpen: number;
   stalledCount: number;
-  reasonsByFamily: { family: ReasonFamily | null; rows: ReasonRow[] }[];
-  listings: ListingRow[];
+  /** Ordenadas pelos dias na etapa atual, as mais antigas primeiro. */
+  openRows: OpenReturnRow[];
 };
 
 function reasonIndex(reasons: ReturnReason[]): Map<string, ReturnReason> {
@@ -300,43 +234,18 @@ function countBy<T>(items: T[], predicate: (item: T) => boolean): number {
   return items.reduce((total, item) => total + (predicate(item) ? 1 : 0), 0);
 }
 
+/**
+ * Situação atual das devoluções em aberto. Ignora o período selecionado no
+ * painel: uma devolução aberta há meses continua aparecendo até ser concluída.
+ */
 export function buildTracking(
   payload: ReturnsPayload,
   filters: ReturnsFilters,
   stalledDaysThreshold: number,
 ): TrackingSummary {
-  const { window } = payload;
   const records = payload.records.filter((record) => matchesFilters(record, filters));
   const history = groupHistory(payload.history);
   const reasons = reasonIndex(payload.reasons);
-  const hasComparison = Boolean(window.comparisonStart && window.comparisonEnd);
-  const cutoff = hasComparison && window.comparisonEnd ? endOfSaoPauloDay(window.comparisonEnd) : null;
-
-  const positionCounter = (stage: ReturnStage): StageCounter => ({
-    current: countBy(records, (record) => record.stage === stage),
-    comparison: cutoff === null
-      ? null
-      : countBy(records, (record) => stageAt(record, history.get(record.claimId), cutoff) === stage),
-  });
-
-  const periodCounter = (dateOf: (record: ReturnRecord) => string | null): StageCounter => ({
-    current: countBy(records, (record) => inWindow(dateOf(record), window.currentStart, window.currentEnd)),
-    comparison: hasComparison
-      ? countBy(records, (record) => inWindow(dateOf(record), window.comparisonStart, window.comparisonEnd))
-      : null,
-  });
-
-  const openedDate = (record: ReturnRecord) => saoPauloDate(record.openedAt);
-  const openedCurrent = records.filter((record) => inWindow(openedDate(record), window.currentStart, window.currentEnd));
-  const openedComparison = hasComparison
-    ? records.filter((record) => inWindow(openedDate(record), window.comparisonStart, window.comparisonEnd))
-    : [];
-
-  const funnel = RETURN_STAGES.map((stage) => ({
-    stage,
-    label: RETURN_STAGE_LABELS[stage],
-    count: countBy(openedCurrent, (record) => record.stage === stage),
-  }));
 
   const openRows: OpenReturnRow[] = records
     .filter((record) => record.stage === null || OPEN_RETURN_STAGES.includes(record.stage))
@@ -361,21 +270,64 @@ export function buildTracking(
     .sort((a, b) => (b.daysInStage ?? -1) - (a.daysInStage ?? -1));
 
   return {
-    counters: {
-      open: positionCounter("aberta"),
-      inTransit: positionCounter("enviada_pelo_comprador"),
-      awaitingReview: positionCounter("recebida"),
-      refunded: periodCounter(refundDate),
-    },
-    openedInPeriod: { current: openedCurrent.length, comparison: hasComparison ? openedComparison.length : null },
-    comparisonCutoffDate: hasComparison ? window.comparisonEnd : null,
-    funnel,
-    funnelUnmapped: countBy(openedCurrent, (record) => record.stage === null),
-    funnelTotal: openedCurrent.length,
-    openRows,
+    stages: OPEN_RETURN_STAGES.map((stage) => ({
+      stage,
+      count: countBy(openRows, (row) => row.stage === stage),
+      stalled: countBy(openRows, (row) => row.stage === stage && row.stalled),
+    })),
+    totalOpen: openRows.length,
+    unmappedOpen: countBy(openRows, (row) => row.stage === null),
     stalledCount: countBy(openRows, (row) => row.stalled),
-    reasonsByFamily: buildReasonRows(openedCurrent, openedComparison, reasons, hasComparison),
-    listings: buildListingRows(openedCurrent, openedComparison, hasComparison),
+    openRows,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// Motivos e anúncios do período (exibidos no Fechamento)
+// -----------------------------------------------------------------------------
+
+export type ReasonRow = {
+  reasonId: string;
+  name: string;
+  family: ReasonFamily | null;
+  current: number;
+  comparison: number | null;
+  sharePercent: number | null;
+};
+
+export type ListingRow = {
+  mlbId: string;
+  title: string | null;
+  current: number;
+  comparison: number | null;
+  units: number;
+  amount: number;
+};
+
+export type PeriodBreakdown = {
+  reasonsByFamily: { family: ReasonFamily | null; rows: ReasonRow[] }[];
+  listings: ListingRow[];
+};
+
+/**
+ * Devoluções das vendas feitas no período (mesma regra do Fechamento: data da
+ * venda original, sem as "encerradas sem devolução"), por motivo e por anúncio.
+ */
+export function buildPeriodBreakdown(payload: ReturnsPayload, filters: ReturnsFilters): PeriodBreakdown {
+  const { window } = payload;
+  const hasComparison = Boolean(window.comparisonStart && window.comparisonEnd);
+  const reasons = reasonIndex(payload.reasons);
+  const returned = payload.records.filter(
+    (record) => matchesFilters(record, filters) && record.stage !== "encerrada_sem_devolucao",
+  );
+  const current = returned.filter((record) => inWindow(record.saleDate, window.currentStart, window.currentEnd));
+  const comparison = hasComparison
+    ? returned.filter((record) => inWindow(record.saleDate, window.comparisonStart, window.comparisonEnd))
+    : [];
+
+  return {
+    reasonsByFamily: buildReasonRows(current, comparison, reasons, hasComparison),
+    listings: buildListingRows(current, comparison, hasComparison),
   };
 }
 
@@ -384,7 +336,7 @@ function buildReasonRows(
   comparison: ReturnRecord[],
   reasons: Map<string, ReturnReason>,
   hasComparison: boolean,
-): TrackingSummary["reasonsByFamily"] {
+): PeriodBreakdown["reasonsByFamily"] {
   const familyOf = (record: ReturnRecord): ReasonFamily | null =>
     record.family ?? (record.reasonId ? reasons.get(record.reasonId)?.family ?? null : null);
   const keyOf = (record: ReturnRecord) => record.reasonId ?? "sem_motivo";

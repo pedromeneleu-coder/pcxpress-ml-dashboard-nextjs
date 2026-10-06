@@ -82,33 +82,66 @@ test("conta dias parada a partir da entrada na etapa atual", { skip: skipTs }, (
   assert.equal(metrics.daysInStage(item, history, "2026-10-05T15:00:00.000Z"), 10);
 });
 
-test("reconstrói a etapa no fim do período de comparação", { skip: skipTs }, () => {
-  const item = record({ stage: "reembolsada", openedAt: "2026-08-20T12:00:00.000Z" });
-  const history = [
-    { claimId: "C1", rawStatus: "opened", stage: "aberta", occurredAt: "2026-08-20T12:00:00.000Z" },
-    { claimId: "C1", rawStatus: "shipped", stage: "enviada_pelo_comprador", occurredAt: "2026-09-01T12:00:00.000Z" },
-    { claimId: "C1", rawStatus: "refunded", stage: "reembolsada", occurredAt: "2026-09-15T12:00:00.000Z" },
-  ];
-  const cutoff = metrics.endOfSaoPauloDay("2026-09-05");
-  assert.equal(metrics.stageAt(item, history, cutoff), "enviada_pelo_comprador");
-  assert.equal(metrics.stageAt(record({ openedAt: "2026-09-10T12:00:00.000Z" }), [], cutoff), null);
-});
-
-test("contadores mostram posição atual e posição no fim da comparação", { skip: skipTs }, () => {
+test("acompanhamento mostra só o que está em aberto hoje, por etapa", { skip: skipTs }, () => {
   const data = payload({
     records: [
       record({ claimId: "A", stage: "aberta", openedAt: "2026-10-01T12:00:00.000Z" }),
       record({ claimId: "B", stage: "aberta", openedAt: "2026-09-01T12:00:00.000Z" }),
-      record({ claimId: "C", stage: "reembolsada", openedAt: "2026-08-20T12:00:00.000Z", refundedAt: "2026-09-10T12:00:00.000Z" }),
+      record({ claimId: "R", stage: "revisada", openedAt: "2026-09-25T12:00:00.000Z", lastUpdatedAt: "2026-09-30T12:00:00.000Z" }),
+      record({ claimId: "Z", stage: null, rawStatus: "status_novo" }),
+      record({ claimId: "C", stage: "reembolsada", refundedAt: "2026-09-10T12:00:00.000Z" }),
+      record({ claimId: "E", stage: "encerrada_sem_devolucao" }),
     ],
   });
   const tracking = metrics.buildTracking(data, ALL, 7);
-  assert.deepEqual(tracking.counters.open, { current: 2, comparison: 2 });
-  assert.deepEqual(tracking.counters.refunded, { current: 1, comparison: 0 });
-  assert.equal(tracking.comparisonCutoffDate, "2026-09-05");
-  assert.equal(tracking.openRows.length, 2);
-  assert.equal(tracking.stalledCount, 1);
+  const byStage = Object.fromEntries(tracking.stages.map((item) => [item.stage, item]));
+
+  assert.deepEqual(tracking.stages.map((item) => item.stage), ["aberta", "enviada_pelo_comprador", "recebida", "revisada"]);
+  assert.deepEqual(byStage.aberta, { stage: "aberta", count: 2, stalled: 1 });
+  assert.deepEqual(byStage.revisada, { stage: "revisada", count: 1, stalled: 0 });
+  assert.equal(tracking.totalOpen, 4);
+  assert.equal(tracking.unmappedOpen, 1);
+  assert.equal(tracking.openRows.some((row) => row.claimId === "C" || row.claimId === "E"), false);
   assert.equal(tracking.openRows[0].claimId, "B");
+  assert.equal(tracking.stalledCount, 2);
+});
+
+test("acompanhamento não muda com o filtro de datas", { skip: skipTs }, () => {
+  const records = [
+    record({ claimId: "OLD", stage: "aberta", openedAt: "2025-12-01T12:00:00.000Z", saleDate: "2025-11-20" }),
+    record({ claimId: "NEW", stage: "recebida", openedAt: "2026-10-03T12:00:00.000Z" }),
+  ];
+  const septemberWindow = payload({ records });
+  const januaryWindow = payload({
+    records,
+    window: { currentStart: "2026-01-01", currentEnd: "2026-01-31", comparisonStart: null, comparisonEnd: null },
+  });
+
+  assert.deepEqual(
+    metrics.buildTracking(januaryWindow, ALL, 7),
+    metrics.buildTracking(septemberWindow, ALL, 7),
+  );
+  assert.equal(metrics.buildTracking(septemberWindow, ALL, 7).totalOpen, 2);
+});
+
+test("motivos e anúncios do Fechamento seguem a data da venda", { skip: skipTs }, () => {
+  const data = payload({
+    records: [
+      record({ claimId: "1", saleDate: "2026-09-10", reasonId: "P1", mlbId: "MLB1", returnedAmount: 1000 }),
+      record({ claimId: "2", saleDate: "2026-09-20", reasonId: "P1", mlbId: "MLB1", returnedAmount: 500 }),
+      record({ claimId: "3", saleDate: "2026-08-20", reasonId: "P1", mlbId: "MLB1" }),
+      record({ claimId: "4", saleDate: "2026-09-21", reasonId: "P2", stage: "encerrada_sem_devolucao" }),
+      record({ claimId: "5", saleDate: "2026-07-01", reasonId: "P2" }),
+    ],
+    reasons: [{ reasonId: "P1", family: "PDD", name: "Faltam peças", detail: null, operationalError: true }],
+  });
+  const breakdown = metrics.buildPeriodBreakdown(data, ALL);
+  const pdd = breakdown.reasonsByFamily.find((group) => group.family === "PDD");
+
+  assert.deepEqual(pdd.rows, [
+    { reasonId: "P1", name: "Faltam peças", family: "PDD", current: 2, comparison: 1, sharePercent: 100 },
+  ]);
+  assert.deepEqual(breakdown.listings[0], { mlbId: "MLB1", title: "PC Gamer", current: 2, comparison: 1, units: 2, amount: 1500 });
 });
 
 test("filtros separam Full e família do motivo", { skip: skipTs }, () => {

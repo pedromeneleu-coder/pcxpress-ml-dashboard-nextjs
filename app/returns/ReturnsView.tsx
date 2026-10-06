@@ -9,6 +9,7 @@ import {
   ClipboardCheck,
   Database,
   Hourglass,
+  PackageCheck,
   Minus,
   PackageOpen,
   Truck,
@@ -27,10 +28,10 @@ import {
   RETURN_STAGE_LABELS,
   buildClosing,
   buildOverviewAlerts,
+  buildPeriodBreakdown,
   buildTracking,
   type ClosingTotals,
   type OpenReturnRow,
-  type StageCounter,
 } from "./returns-metrics";
 import type {
   ReasonFamily,
@@ -349,186 +350,73 @@ function OpenReturnsTable({ rows }: { rows: OpenReturnRow[] }) {
   );
 }
 
-function counterTrend(counter: StageCounter, reference: string | null) {
-  return reference ? <ReturnsTrend current={counter.current} previous={counter.comparison} reference={reference} /> : undefined;
-}
+const OPEN_STAGE_CARDS = {
+  aberta: {
+    label: "Abertas",
+    detail: "Aguardando o comprador postar o produto.",
+    icon: Undo2,
+  },
+  enviada_pelo_comprador: {
+    label: "A caminho",
+    detail: "Postadas pelo comprador, em trânsito até a loja.",
+    icon: Truck,
+  },
+  recebida: {
+    label: "Recebidas, aguardando revisão",
+    detail: "Chegaram à loja e precisam ser conferidas.",
+    icon: Hourglass,
+  },
+  revisada: {
+    label: "Revisadas, aguardando reembolso",
+    detail: "Conferidas; falta concluir o reembolso.",
+    icon: PackageCheck,
+  },
+} as const;
 
 function TrackingView({ payload, filters }: { payload: ReturnsPayload; filters: ReturnsFilters }) {
   const tracking = useMemo(() => buildTracking(payload, filters, STALLED_DAYS_THRESHOLD), [payload, filters]);
-  const { counters, funnel } = tracking;
-  const positionReference = tracking.comparisonCutoffDate ? `em ${formatDate(tracking.comparisonCutoffDate)}` : null;
-  const periodReference = payload.window.comparisonStart && payload.window.comparisonEnd
-    ? `(${formatDate(payload.window.comparisonStart)} a ${formatDate(payload.window.comparisonEnd)})`
-    : null;
-  const funnelMax = Math.max(1, ...funnel.map((item) => item.count), tracking.funnelUnmapped);
+  const stalledText = tracking.stalledCount
+    ? `${formatNumber(tracking.stalledCount)} ${tracking.stalledCount === 1 ? "parada" : "paradas"} há mais de ${STALLED_DAYS_THRESHOLD} dias na mesma etapa, destacadas e no topo da lista.`
+    : `Nenhuma parada há mais de ${STALLED_DAYS_THRESHOLD} dias na mesma etapa.`;
 
   return (
     <>
       <section className="kpi-grid">
-        <ReturnsKpi
-          label="Abertas"
-          value={formatNumber(counters.open.current)}
-          detail="Aguardando o comprador postar o produto. Posição atual."
-          icon={Undo2}
-          tone="brand"
-          trend={counterTrend(counters.open, positionReference)}
-        />
-        <ReturnsKpi
-          label="A caminho"
-          value={formatNumber(counters.inTransit.current)}
-          detail="Postadas pelo comprador, em trânsito até a loja. Posição atual."
-          icon={Truck}
-          trend={counterTrend(counters.inTransit, positionReference)}
-        />
-        <ReturnsKpi
-          label="Recebidas, aguardando revisão"
-          value={formatNumber(counters.awaitingReview.current)}
-          detail="Chegaram à loja e ainda não foram revisadas. Posição atual."
-          icon={Hourglass}
-          tone="warning"
-          trend={counterTrend(counters.awaitingReview, positionReference)}
-        />
-        <ReturnsKpi
-          label="Reembolsadas no período"
-          value={formatNumber(counters.refunded.current)}
-          detail="Reembolsos concluídos dentro do período selecionado."
-          icon={Wallet}
-          trend={counterTrend(counters.refunded, periodReference)}
-        />
-      </section>
-
-      <section className="content-grid two-one">
-        <article className="panel">
-          <SectionTitle
-            title="Funil por etapa"
-            subtitle={`Devoluções abertas no período selecionado (${formatNumber(tracking.funnelTotal)}), pela etapa em que estão hoje.`}
-            action={periodReference ? (
-              <ReturnsTrend current={tracking.openedInPeriod.current} previous={tracking.openedInPeriod.comparison} reference={periodReference} />
-            ) : undefined}
-          />
-          <ol className="returns-funnel">
-            {funnel.map((item) => (
-              <li key={item.stage}>
-                <span>{item.label}</span>
-                <div className="returns-funnel-track" aria-hidden="true">
-                  <div className={`returns-funnel-bar stage-${item.stage}`} style={{ width: `${(item.count / funnelMax) * 100}%` }} />
-                </div>
-                <strong>{formatNumber(item.count)}</strong>
-              </li>
-            ))}
-            {tracking.funnelUnmapped ? (
-              <li className="returns-funnel-unmapped">
-                <span>Status não mapeado</span>
-                <div className="returns-funnel-track" aria-hidden="true">
-                  <div className="returns-funnel-bar" style={{ width: `${(tracking.funnelUnmapped / funnelMax) * 100}%` }} />
-                </div>
-                <strong>{formatNumber(tracking.funnelUnmapped)}</strong>
-              </li>
-            ) : null}
-          </ol>
-        </article>
-
-        <article className="panel">
-          <SectionTitle
-            title={`Paradas há mais de ${STALLED_DAYS_THRESHOLD} dias`}
-            subtitle="Limite provisório, configurável em returns-config.ts."
-          />
-          <div className="returns-stalled-callout">
-            <span className={`decision-icon ${tracking.stalledCount ? "warning" : "good"}`}>
-              {tracking.stalledCount ? <AlertTriangle size={17} /> : <CheckCircle2 size={17} />}
-            </span>
-            <div>
-              <strong>{formatNumber(tracking.stalledCount)} {tracking.stalledCount === 1 ? "devolução parada" : "devoluções paradas"}</strong>
-              <small>
-                Em aberto há mais de {STALLED_DAYS_THRESHOLD} dias na mesma etapa. Destacadas em vermelho na tabela abaixo.
-              </small>
-            </div>
-          </div>
-        </article>
+        {tracking.stages.map((item) => {
+          const card = OPEN_STAGE_CARDS[item.stage as keyof typeof OPEN_STAGE_CARDS];
+          return (
+            <ReturnsKpi
+              key={item.stage}
+              label={card.label}
+              value={formatNumber(item.count)}
+              detail={card.detail}
+              icon={card.icon}
+              tone={item.stalled ? "warning" : "neutral"}
+              trend={(
+                <span className={`comparison-indicator returns-trend ${item.stalled ? "comparison-down" : "comparison-neutral"}`}>
+                  {item.stalled ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
+                  {item.stalled
+                    ? `${formatNumber(item.stalled)} ${item.stalled === 1 ? "parada" : "paradas"} há mais de ${STALLED_DAYS_THRESHOLD} dias`
+                    : "Nenhuma parada"}
+                </span>
+              )}
+            />
+          );
+        })}
       </section>
 
       <section className="panel table-panel">
         <SectionTitle
-          title="Devoluções em aberto"
-          subtitle={`${formatNumber(tracking.openRows.length)} em aberto hoje, de qualquer data. Clique no título da coluna para ordenar.`}
+          title={`Devoluções em aberto (${formatNumber(tracking.totalOpen)})`}
+          subtitle={`${stalledText} Clique no título da coluna para reordenar.`}
         />
+        {tracking.unmappedOpen ? (
+          <div className="returns-note warning">
+            <AlertTriangle size={15} />
+            {formatNumber(tracking.unmappedOpen)} {tracking.unmappedOpen === 1 ? "devolução tem" : "devoluções têm"} status ainda não traduzido para uma etapa. Elas aparecem na lista, mas não nos números acima. Ajuste em returns-config.ts.
+          </div>
+        ) : null}
         <OpenReturnsTable rows={tracking.openRows} />
-      </section>
-
-      <section className="content-grid equal">
-        <article className="panel">
-          <SectionTitle
-            title="Motivos mais frequentes"
-            subtitle={`Devoluções abertas no período${periodReference ? `; coluna "Antes" = período de comparação ${periodReference}` : ""}.`}
-          />
-          {tracking.reasonsByFamily.filter((group) => INCLUDE_PNR || group.family !== "PNR").map((group) => (
-            <div className="returns-reason-group" key={group.family ?? "sem_familia"}>
-              <h3>{familyLabel(group.family)}</h3>
-              {group.rows.length ? (
-                <div className="table-wrap">
-                  <table className="returns-compact-table">
-                    <thead>
-                      <tr>
-                        <th>Motivo</th>
-                        <th className="number-cell">Devoluções</th>
-                        <th className="number-cell">Participação</th>
-                        {periodReference ? <th className="number-cell">Antes</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.rows.map((row) => (
-                        <tr key={row.reasonId}>
-                          <td>{row.name}</td>
-                          <td className="number-cell">{formatNumber(row.current)}</td>
-                          <td className="number-cell">{formatPercent(row.sharePercent)}</td>
-                          {periodReference ? <td className="number-cell">{row.comparison === null ? "—" : formatNumber(row.comparison)}</td> : null}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="empty-table-message">Nenhuma devolução desta família no período.</p>
-              )}
-            </div>
-          ))}
-        </article>
-
-        <article className="panel">
-          <SectionTitle
-            title="Anúncios com mais devoluções"
-            subtitle={`Devoluções abertas no período${periodReference ? `; coluna "Antes" = período de comparação ${periodReference}` : ""}.`}
-          />
-          {tracking.listings.length ? (
-            <div className="table-wrap">
-              <table className="returns-compact-table">
-                <thead>
-                  <tr>
-                    <th>Anúncio</th>
-                    <th className="number-cell">Devoluções</th>
-                    <th className="number-cell">Valor</th>
-                    {periodReference ? <th className="number-cell">Antes</th> : null}
-                  </tr>
-                </thead>
-                <tbody>
-                  {tracking.listings.map((row) => (
-                    <tr key={row.mlbId}>
-                      <td>
-                        <strong className="returns-cell-title">{row.title ?? "Anúncio não informado"}</strong>
-                        <small>{row.mlbId === "sem_anuncio" ? "Sem MLB" : row.mlbId}</small>
-                      </td>
-                      <td className="number-cell">{formatNumber(row.current)}</td>
-                      <td className="number-cell">{formatCurrency(row.amount)}</td>
-                      {periodReference ? <td className="number-cell">{row.comparison === null ? "—" : formatNumber(row.comparison)}</td> : null}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="empty-table-message">Nenhuma devolução aberta no período com os filtros selecionados.</p>
-          )}
-        </article>
       </section>
     </>
   );
@@ -558,6 +446,9 @@ function ClosingView({ payload, filters }: { payload: ReturnsPayload; filters: R
     ? <ReturnsTrend current={value} previous={previous ?? null} reference={periodReference} format={format} />
     : undefined;
   const hasProvisional = closing.months.some((month) => month.provisional);
+  const breakdown = useMemo(() => buildPeriodBreakdown(payload, filters), [payload, filters]);
+  const comparisonColumn = Boolean(comparison);
+  const breakdownSubtitle = `Devoluções das vendas do período, sem as encerradas sem devolução${comparison ? `; coluna "Antes" = período de comparação ${periodReference}` : ""}.`;
 
   return (
     <>
@@ -669,6 +560,76 @@ function ClosingView({ payload, filters }: { payload: ReturnsPayload; filters: R
           {comparison ? ` Comparação com o período ${periodReference}.` : ""}
         </p>
       </section>
+
+      <section className="content-grid equal">
+        <article className="panel">
+          <SectionTitle title="Motivos mais frequentes" subtitle={breakdownSubtitle} />
+          {breakdown.reasonsByFamily.filter((group) => INCLUDE_PNR || group.family !== "PNR").map((group) => (
+            <div className="returns-reason-group" key={group.family ?? "sem_familia"}>
+              <h3>{familyLabel(group.family)}</h3>
+              {group.rows.length ? (
+                <div className="table-wrap">
+                  <table className="returns-compact-table">
+                    <thead>
+                      <tr>
+                        <th>Motivo</th>
+                        <th className="number-cell">Devoluções</th>
+                        <th className="number-cell">Participação</th>
+                        {comparisonColumn ? <th className="number-cell">Antes</th> : null}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.rows.map((row) => (
+                        <tr key={row.reasonId}>
+                          <td>{row.name}</td>
+                          <td className="number-cell">{formatNumber(row.current)}</td>
+                          <td className="number-cell">{formatPercent(row.sharePercent)}</td>
+                          {comparisonColumn ? <td className="number-cell">{row.comparison === null ? "—" : formatNumber(row.comparison)}</td> : null}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="empty-table-message">Nenhuma devolução desta família no período.</p>
+              )}
+            </div>
+          ))}
+        </article>
+
+        <article className="panel">
+          <SectionTitle title="Anúncios com mais devoluções" subtitle={breakdownSubtitle} />
+          {breakdown.listings.length ? (
+            <div className="table-wrap">
+              <table className="returns-compact-table">
+                <thead>
+                  <tr>
+                    <th>Anúncio</th>
+                    <th className="number-cell">Devoluções</th>
+                    <th className="number-cell">Valor</th>
+                    {comparisonColumn ? <th className="number-cell">Antes</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {breakdown.listings.map((row) => (
+                    <tr key={row.mlbId}>
+                      <td>
+                        <strong className="returns-cell-title">{row.title ?? "Anúncio não informado"}</strong>
+                        <small>{row.mlbId === "sem_anuncio" ? "Sem MLB" : row.mlbId}</small>
+                      </td>
+                      <td className="number-cell">{formatNumber(row.current)}</td>
+                      <td className="number-cell">{formatCurrency(row.amount)}</td>
+                      {comparisonColumn ? <td className="number-cell">{row.comparison === null ? "—" : formatNumber(row.comparison)}</td> : null}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="empty-table-message">Nenhuma devolução nas vendas do período com os filtros selecionados.</p>
+          )}
+        </article>
+      </section>
     </>
   );
 }
@@ -727,7 +688,11 @@ export function ReturnsView({ payload, loading }: { payload: ReturnsPayload; loa
           onChange={(family) => setFilters((current) => ({ ...current, family }))}
         />
       </section>
-      <p className="returns-toolbar-hint">O período segue o filtro global do topo da página (7d, 30d, 90d ou Personalizar).</p>
+      <p className="returns-toolbar-hint">
+        {tab === "tracking"
+          ? "Situação de hoje: o filtro de período do topo da página não altera esta aba."
+          : "O período segue o filtro do topo da página (7d, 30d, 90d ou Personalizar), pela data da venda original."}
+      </p>
 
       {tab === "tracking"
         ? <TrackingView payload={payload} filters={filters} />
