@@ -74,15 +74,14 @@ const PATHS: DemoPath[] = [
 
 export function buildDemoReturnsPayload(window: ReturnsWindow): ReturnsPayload {
   const random = seeded(20261005);
-  const now = Date.now();
+  // Mesmo conjunto de devoluções qualquer que seja o período escolhido: o
+  // Acompanhamento não depende do filtro de datas. "Agora" é fixado no dia.
+  const now = Math.floor(Date.now() / DAY_MS) * DAY_MS + 15 * 3_600_000;
   const generatedAt = new Date(now).toISOString();
   const records: ReturnRecord[] = [];
   const history: ReturnStatusEvent[] = [];
-  const earliest = [window.currentStart, window.comparisonStart]
-    .filter((value): value is string => Boolean(value))
-    .sort()[0];
-  const spanDays = Math.max(30, Math.round((now - Date.parse(`${earliest}T00:00:00Z`)) / DAY_MS) + 30);
-  const total = Math.min(220, Math.max(40, Math.round(spanDays * 0.6)));
+  const spanDays = 420;
+  const total = 250;
 
   for (let index = 0; index < total; index += 1) {
     const openedTime = now - Math.floor(random() * spanDays) * DAY_MS - Math.floor(random() * 20) * 3_600_000;

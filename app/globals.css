@@ -691,22 +691,6 @@ h3,
 .returns-empty-state strong { display: block; color: var(--ink); font-size: 14px; }
 .returns-empty-state p { margin: 6px 0 0; max-width: 520px; font-size: 11px; line-height: 1.5; }
 .returns-empty-state small { display: block; margin-top: 8px; font-size: 9px; }
-.returns-funnel { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.returns-funnel li { display: grid; grid-template-columns: minmax(150px, 210px) minmax(0, 1fr) 48px; align-items: center; gap: 12px; font-size: 11px; color: #4d5961; }
-.returns-funnel li strong { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
-.returns-funnel-track { height: 12px; border-radius: 3px; background: #eef1f2; overflow: hidden; }
-.returns-funnel-bar { height: 100%; border-radius: 3px; background: #9aa6ad; }
-.returns-funnel-bar.stage-aberta { background: var(--brand-dark); }
-.returns-funnel-bar.stage-enviada_pelo_comprador { background: #2f8fb0; }
-.returns-funnel-bar.stage-recebida { background: var(--amber); }
-.returns-funnel-bar.stage-revisada { background: #7a8f99; }
-.returns-funnel-bar.stage-reembolsada { background: var(--green); }
-.returns-funnel-bar.stage-encerrada_sem_devolucao { background: #c4ccd1; }
-.returns-funnel-unmapped { color: #7a5208; }
-.returns-funnel-unmapped .returns-funnel-bar { background: repeating-linear-gradient(45deg, #e39a19 0 4px, #f4c56f 4px 8px); }
-.returns-stalled-callout { display: flex; gap: 12px; align-items: flex-start; }
-.returns-stalled-callout strong { display: block; font-size: 18px; }
-.returns-stalled-callout small { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .returns-table th { white-space: nowrap; }
 .returns-sort { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; cursor: pointer; }
 .returns-sort:hover { color: var(--ink); }
@@ -728,8 +712,6 @@ h3,
 @media (max-width: 600px) {
   .returns-toolbar { flex-direction: column; align-items: stretch; }
   .returns-filter .chart-tabs { display: flex; }
-  .returns-funnel li { grid-template-columns: minmax(0, 1fr) 40px; }
-  .returns-funnel-track { grid-column: 1 / -1; grid-row: 2; }
 }
 .returns-show-all { margin-top: 12px; }
 .returns-trend { max-width: 100%; white-space: normal; line-height: 1.35; align-items: flex-start; }
