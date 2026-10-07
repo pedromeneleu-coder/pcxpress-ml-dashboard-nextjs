@@ -8,8 +8,10 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Database,
-  Hourglass,
-  PackageCheck,
+  BellRing,
+  CalendarClock,
+  CirclePause,
+  ListOrdered,
   Minus,
   PackageOpen,
   Truck,
@@ -22,7 +24,7 @@ import {
   INCLUDE_PNR,
   OPERATIONAL_ERROR_ALERT_INCREASE_POINTS,
   PROVISIONAL_WINDOW_DAYS,
-  STALLED_DAYS_THRESHOLD,
+  RETURNS_QUEUE_RULES,
 } from "./returns-config";
 import {
   RETURN_STAGE_LABELS,
@@ -31,7 +33,9 @@ import {
   buildPeriodBreakdown,
   buildTracking,
   type ClosingTotals,
-  type OpenReturnRow,
+  saoPauloDate,
+  type QueueRow,
+  type SellerDeadline,
 } from "./returns-metrics";
 import type {
   ReasonFamily,
@@ -235,188 +239,281 @@ function ReturnsEmptyState({ payload }: { payload: ReturnsPayload }) {
 // A. Acompanhamento
 // -----------------------------------------------------------------------------
 
-type SortKey = "order" | "listing" | "reason" | "stage" | "days" | "amount";
-
-function sortValue(row: OpenReturnRow, key: SortKey): string | number {
-  switch (key) {
-    case "order":
-      return row.orderId ?? "";
-    case "listing":
-      return row.listingTitle ?? row.mlbId ?? "";
-    case "reason":
-      return row.reasonName ?? row.reasonId ?? "";
-    case "stage":
-      return row.stage ? RETURN_STAGE_LABELS[row.stage] : "~";
-    case "days":
-      return row.daysInStage ?? -1;
-    case "amount":
-      return row.amount ?? -1;
-  }
+/** Datas do ML no calendário de São Paulo, no formato dd/mm/aaaa. */
+function formatMlDate(value: string | null) {
+  return formatDate(saoPauloDate(value));
 }
 
-const OPEN_ROWS_PREVIEW = 25;
+function formatOptionalCurrency(value: number | null) {
+  return value === null ? "—" : formatCurrency(value);
+}
 
-function OpenReturnsTable({ rows }: { rows: OpenReturnRow[] }) {
-  const [sortKey, setSortKey] = useState<SortKey>("days");
-  const [descending, setDescending] = useState(true);
+function claimStatusLabel(value: string | null) {
+  const status = value?.trim().toLowerCase();
+  if (status === "opened" || status === "aberta") return "Aberta";
+  if (status === "closed" || status === "fechada") return "Fechada";
+  return value ?? "—";
+}
+
+const DEADLINE_BADGES: Record<SellerDeadline, { label: string; tone: string } | null> = {
+  vencido: { label: "Prazo vencido", tone: "danger" },
+  hoje: { label: "Prazo hoje", tone: "danger" },
+  proximo: { label: `Prazo ≤ ${RETURNS_QUEUE_RULES.deadlineWarningDays} dias`, tone: "warning" },
+  ok: null,
+};
+
+type QueueColumn = {
+  key: string;
+  label: string;
+  className?: string;
+  render: (row: QueueRow) => React.ReactNode;
+  sort: (row: QueueRow) => string | number;
+};
+
+const text = (value: string | null) => value ?? "—";
+const dateSort = (value: string | null) => saoPauloDate(value) ?? "";
+
+/** Colunas A–X da aba "Devoluções" da planilha (chave + dados do Mercado Livre). */
+const QUEUE_COLUMNS: QueueColumn[] = [
+  {
+    key: "order",
+    label: "Nº da venda",
+    className: "returns-sticky-col",
+    render: (row) => {
+      const deadline = row.deadline ? DEADLINE_BADGES[row.deadline] : null;
+      return (
+        <>
+          <strong className="returns-cell-title">{text(row.record.orderId)}</strong>
+          <span className="returns-badges">
+            {deadline ? <span className={`returns-badge ${deadline.tone}`}>{deadline.label}</span> : null}
+            {row.awaitingSellerAction ? <span className="returns-badge brand">Ação do vendedor</span> : null}
+            {row.stalled ? <span className="returns-badge warning">Parado</span> : null}
+          </span>
+        </>
+      );
+    },
+    sort: (row) => row.record.orderId ?? "",
+  },
+  { key: "claim", label: "ID da reclamação", render: (row) => text(row.record.claimId), sort: (row) => row.record.claimId },
+  { key: "saleDate", label: "Data da venda", render: (row) => formatMlDate(row.record.saleDate), sort: (row) => row.record.saleDate ?? "" },
+  { key: "openedAt", label: "Data abertura reclamação", render: (row) => formatMlDate(row.record.openedAt), sort: (row) => dateSort(row.record.openedAt) },
+  { key: "mlb", label: "MLB", render: (row) => text(row.record.mlbId), sort: (row) => row.record.mlbId ?? "" },
+  {
+    key: "title",
+    label: "Título do anúncio",
+    className: "returns-cell-wide",
+    render: (row) => text(row.record.listingTitle),
+    sort: (row) => row.record.listingTitle ?? "",
+  },
+  { key: "sku", label: "SKU", render: (row) => text(row.record.sku), sort: (row) => row.record.sku ?? "" },
+  {
+    key: "quantity",
+    label: "Qtd",
+    className: "number-cell",
+    render: (row) => (row.record.quantity === null ? "—" : formatNumber(row.record.quantity)),
+    sort: (row) => row.record.quantity ?? -1,
+  },
+  {
+    key: "saleAmount",
+    label: "Valor da venda (R$)",
+    className: "number-cell",
+    render: (row) => formatOptionalCurrency(row.record.saleAmount),
+    sort: (row) => row.record.saleAmount ?? -1,
+  },
+  {
+    key: "refundedAmount",
+    label: "Valor reembolsado (R$)",
+    className: "number-cell",
+    render: (row) => formatOptionalCurrency(row.record.refundedAmount),
+    sort: (row) => row.record.refundedAmount ?? -1,
+  },
+  { key: "buyer", label: "Comprador (apelido)", render: (row) => text(row.record.buyerNickname), sort: (row) => row.record.buyerNickname ?? "" },
+  { key: "reason", label: "Motivo", className: "returns-cell-medium", render: (row) => text(row.reasonText), sort: (row) => row.reasonText ?? "" },
+  { key: "caseType", label: "Etapa", render: (row) => text(row.record.caseType), sort: (row) => row.record.caseType ?? "" },
+  { key: "claimStatus", label: "Status ML", render: (row) => claimStatusLabel(row.record.claimStatus), sort: (row) => claimStatusLabel(row.record.claimStatus) },
+  {
+    key: "returnStatus",
+    label: "Status do retorno",
+    className: "returns-cell-medium",
+    render: (row) => row.record.returnStatusText ?? (row.record.stage ? RETURN_STAGE_LABELS[row.record.stage] : (
+      <span className="returns-badge warning" title={`Status recebido: ${row.record.rawStatus ?? "vazio"}`}>Status não traduzido</span>
+    )),
+    sort: (row) => row.record.returnStatusText ?? "",
+  },
+  {
+    key: "description",
+    label: "Descrição do status (ML)",
+    className: "returns-cell-wide",
+    render: (row) => text(row.record.statusDescription),
+    sort: (row) => row.record.statusDescription ?? "",
+  },
+  { key: "expectedAt", label: "Data prevista (ML)", render: (row) => formatMlDate(row.record.expectedAt), sort: (row) => dateSort(row.record.expectedAt) },
+  { key: "destination", label: "Destino do retorno", render: (row) => text(row.record.returnDestination), sort: (row) => row.record.returnDestination ?? "" },
+  { key: "tracking", label: "Rastreio", render: (row) => text(row.record.trackingNumber), sort: (row) => row.record.trackingNumber ?? "" },
+  {
+    key: "dueAt",
+    label: "Prazo p/ ação do vendedor",
+    render: (row) => formatMlDate(row.record.sellerActionDueAt),
+    sort: (row) => dateSort(row.record.sellerActionDueAt) || "9999",
+  },
+  {
+    key: "action",
+    label: "Ação pendente (ML)",
+    className: "returns-cell-wide",
+    render: (row) => text(row.record.pendingAction),
+    sort: (row) => row.record.pendingAction ?? "",
+  },
+  { key: "lastUpdate", label: "Última atualização ML", render: (row) => formatMlDate(row.record.lastUpdatedAt), sort: (row) => dateSort(row.record.lastUpdatedAt) },
+  { key: "result", label: "Resultado", render: (row) => text(row.record.result), sort: (row) => row.record.result ?? "" },
+  { key: "syncedAt", label: "Data do sync", render: (row) => formatMlDate(row.record.syncedAt), sort: (row) => dateSort(row.record.syncedAt) },
+];
+
+const QUEUE_PREVIEW = 25;
+
+function ReturnsQueueTable({ rows }: { rows: QueueRow[] }) {
+  // null = ordem de prioridade da planilha (já aplicada em buildTracking).
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [descending, setDescending] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const sorted = useMemo(() => {
-    const copy = [...rows];
-    copy.sort((a, b) => {
-      const left = sortValue(a, sortKey);
-      const right = sortValue(b, sortKey);
+    const column = QUEUE_COLUMNS.find((item) => item.key === sortKey);
+    if (!column) return rows;
+    return [...rows].sort((a, b) => {
+      const left = column.sort(a);
+      const right = column.sort(b);
       const order = typeof left === "number" && typeof right === "number"
         ? left - right
         : String(left).localeCompare(String(right), "pt-BR");
       return descending ? -order : order;
     });
-    return copy;
   }, [rows, sortKey, descending]);
 
   if (!rows.length) {
-    return <p className="empty-table-message">Nenhuma devolução em aberto com os filtros selecionados.</p>;
+    return <p className="empty-table-message">Nenhum caso aberto com os filtros selecionados.</p>;
   }
 
-  const columns: { key: SortKey; label: string; numeric?: boolean }[] = [
-    { key: "order", label: "Pedido" },
-    { key: "listing", label: "Anúncio" },
-    { key: "reason", label: "Motivo" },
-    { key: "stage", label: "Etapa atual" },
-    { key: "days", label: "Dias na etapa", numeric: true },
-    { key: "amount", label: "Valor", numeric: true },
-  ];
-
-  function toggle(key: SortKey) {
+  function toggle(key: string) {
     if (key === sortKey) {
       setDescending((current) => !current);
     } else {
       setSortKey(key);
-      setDescending(key === "days" || key === "amount");
+      setDescending(false);
     }
   }
 
   return (
-    <div className="table-wrap">
-      <table className="returns-table">
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th
-                key={column.key}
-                className={column.numeric ? "number-cell" : undefined}
-                aria-sort={sortKey === column.key ? (descending ? "descending" : "ascending") : "none"}
-              >
-                <button type="button" className="returns-sort" onClick={() => toggle(column.key)}>
-                  {column.label} <ArrowUpDown size={11} />
-                </button>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {(showAll ? sorted : sorted.slice(0, OPEN_ROWS_PREVIEW)).map((row) => (
-            <tr key={row.claimId} className={row.stalled ? "returns-row-stalled" : undefined}>
-              <td>{row.orderId ?? "—"}</td>
-              <td>
-                <strong className="returns-cell-title">{row.listingTitle ?? "Anúncio não informado"}</strong>
-                <small>{row.mlbId ?? "Sem MLB"}</small>
-              </td>
-              <td>
-                {row.reasonName ?? row.reasonId ?? "Não informado"}
-                {row.family ? <small>{row.family}</small> : null}
-              </td>
-              <td>
-                {row.stage ? RETURN_STAGE_LABELS[row.stage] : (
-                  <span className="returns-badge warning" title={`Status recebido: ${row.rawStatus ?? "vazio"}`}>
-                    Status não mapeado
-                  </span>
-                )}
-              </td>
-              <td className="number-cell">
-                {row.daysInStage === null ? "—" : formatNumber(row.daysInStage)}
-                {row.stalled ? <span className="returns-badge danger">Parada</span> : null}
-              </td>
-              <td className="number-cell">{row.amount === null ? "—" : formatCurrency(row.amount)}</td>
+    <>
+      <div className="returns-queue-toolbar">
+        <span>
+          {sortKey === null
+            ? "Ordem de prioridade: prazo vencido ou hoje → aguardando ação do vendedor → parados → demais."
+            : `Ordenado por "${QUEUE_COLUMNS.find((item) => item.key === sortKey)?.label}".`}
+        </span>
+        {sortKey !== null ? (
+          <button type="button" className="secondary-button" onClick={() => setSortKey(null)}>
+            <ListOrdered size={14} /> Voltar à ordem de prioridade
+          </button>
+        ) : null}
+      </div>
+      <div className="table-wrap returns-queue-wrap">
+        <table className="returns-table returns-queue-table">
+          <thead>
+            <tr>
+              {QUEUE_COLUMNS.map((column) => (
+                <th
+                  key={column.key}
+                  className={column.className}
+                  aria-sort={sortKey === column.key ? (descending ? "descending" : "ascending") : "none"}
+                >
+                  <button type="button" className="returns-sort" onClick={() => toggle(column.key)}>
+                    {column.label} <ArrowUpDown size={11} />
+                  </button>
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length > OPEN_ROWS_PREVIEW ? (
+          </thead>
+          <tbody>
+            {(showAll ? sorted : sorted.slice(0, QUEUE_PREVIEW)).map((row) => (
+              <tr
+                key={row.record.claimId}
+                className={row.priority === 0 ? "returns-row-deadline" : row.stalled ? "returns-row-stalled" : undefined}
+              >
+                {QUEUE_COLUMNS.map((column) => (
+                  <td key={column.key} className={column.className}>{column.render(row)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > QUEUE_PREVIEW ? (
         <button type="button" className="secondary-button returns-show-all" onClick={() => setShowAll((current) => !current)}>
-          {showAll ? `Mostrar só as ${OPEN_ROWS_PREVIEW} primeiras` : `Mostrar todas as ${formatNumber(rows.length)}`}
+          {showAll ? `Mostrar só os ${QUEUE_PREVIEW} primeiros` : `Mostrar todos os ${formatNumber(rows.length)} casos`}
         </button>
       ) : null}
-    </div>
+    </>
   );
 }
 
-const OPEN_STAGE_CARDS = {
-  aberta: {
-    label: "Abertas",
-    detail: "Aguardando o comprador postar o produto.",
-    icon: Undo2,
-  },
-  enviada_pelo_comprador: {
-    label: "A caminho",
-    detail: "Postadas pelo comprador, em trânsito até a loja.",
-    icon: Truck,
-  },
-  recebida: {
-    label: "Recebidas, aguardando revisão",
-    detail: "Chegaram à loja e precisam ser conferidas.",
-    icon: Hourglass,
-  },
-  revisada: {
-    label: "Revisadas, aguardando reembolso",
-    detail: "Conferidas; falta concluir o reembolso.",
-    icon: PackageCheck,
-  },
-} as const;
-
 function TrackingView({ payload, filters }: { payload: ReturnsPayload; filters: ReturnsFilters }) {
-  const tracking = useMemo(() => buildTracking(payload, filters, STALLED_DAYS_THRESHOLD), [payload, filters]);
-  const stalledText = tracking.stalledCount
-    ? `${formatNumber(tracking.stalledCount)} ${tracking.stalledCount === 1 ? "parada" : "paradas"} há mais de ${STALLED_DAYS_THRESHOLD} dias na mesma etapa, destacadas e no topo da lista.`
-    : `Nenhuma parada há mais de ${STALLED_DAYS_THRESHOLD} dias na mesma etapa.`;
+  const tracking = useMemo(() => buildTracking(payload, filters, RETURNS_QUEUE_RULES), [payload, filters]);
+  const stalledRule = `data prevista do ML já passou ou sem atualização há ${RETURNS_QUEUE_RULES.stalledDaysWithoutUpdate}+ dias`;
 
   return (
     <>
       <section className="kpi-grid">
-        {tracking.stages.map((item) => {
-          const card = OPEN_STAGE_CARDS[item.stage as keyof typeof OPEN_STAGE_CARDS];
-          return (
-            <ReturnsKpi
-              key={item.stage}
-              label={card.label}
-              value={formatNumber(item.count)}
-              detail={card.detail}
-              icon={card.icon}
-              tone={item.stalled ? "warning" : "neutral"}
-              trend={(
-                <span className={`comparison-indicator returns-trend ${item.stalled ? "comparison-down" : "comparison-neutral"}`}>
-                  {item.stalled ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
-                  {item.stalled
-                    ? `${formatNumber(item.stalled)} ${item.stalled === 1 ? "parada" : "paradas"} há mais de ${STALLED_DAYS_THRESHOLD} dias`
-                    : "Nenhuma parada"}
-                </span>
-              )}
-            />
-          );
-        })}
+        <ReturnsKpi
+          label="Casos abertos na fila"
+          value={formatNumber(tracking.openCount)}
+          detail={`Valor de venda: ${formatCurrency(tracking.openSaleAmount)}`}
+          icon={Undo2}
+          tone="brand"
+        />
+        <ReturnsKpi
+          label="Prazo do vendedor vencido ou hoje"
+          value={formatNumber(tracking.deadlineDueCount)}
+          detail="Prioridade máxima: o ML espera uma ação da loja até hoje."
+          icon={CalendarClock}
+          tone={tracking.deadlineDueCount ? "warning" : "neutral"}
+        />
+        <ReturnsKpi
+          label="Aguardando ação do vendedor"
+          value={formatNumber(tracking.awaitingActionCount)}
+          detail="Casos em que o ML indica uma ação pendente da loja."
+          icon={BellRing}
+        />
+        <ReturnsKpi
+          label="Parados"
+          value={formatNumber(tracking.stalledCount)}
+          detail={`Valor de venda: ${formatCurrency(tracking.stalledSaleAmount)} · ${stalledRule}.`}
+          icon={CirclePause}
+          tone={tracking.stalledCount ? "warning" : "neutral"}
+        />
+      </section>
+
+      <section className="panel">
+        <SectionTitle title="Por status do retorno" subtitle="Casos abertos agrupados pelo status informado pelo Mercado Livre." />
+        {tracking.byReturnStatus.length ? (
+          <ul className="returns-status-list">
+            {tracking.byReturnStatus.map((group) => (
+              <li key={group.label}>
+                <span>{group.label}</span>
+                <strong>{formatNumber(group.count)}</strong>
+                <small>{formatCurrency(group.saleAmount)}</small>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-table-message">Nenhum caso aberto com os filtros selecionados.</p>
+        )}
       </section>
 
       <section className="panel table-panel">
         <SectionTitle
-          title={`Devoluções em aberto (${formatNumber(tracking.totalOpen)})`}
-          subtitle={`${stalledText} Clique no título da coluna para reordenar.`}
+          title={`Fila de devoluções (${formatNumber(tracking.openCount)} casos abertos)`}
+          subtitle="Mesmas colunas da planilha de fila (chave e dados do Mercado Livre). Vermelho: prazo do vendedor vencido ou hoje. Amarelo: parado. Clique no título da coluna para reordenar; role a tabela para o lado para ver todas as colunas."
         />
-        {tracking.unmappedOpen ? (
-          <div className="returns-note warning">
-            <AlertTriangle size={15} />
-            {formatNumber(tracking.unmappedOpen)} {tracking.unmappedOpen === 1 ? "devolução tem" : "devoluções têm"} status ainda não traduzido para uma etapa. Elas aparecem na lista, mas não nos números acima. Ajuste em returns-config.ts.
-          </div>
-        ) : null}
-        <OpenReturnsTable rows={tracking.openRows} />
+        <ReturnsQueueTable rows={tracking.rows} />
       </section>
     </>
   );
@@ -708,7 +805,7 @@ export function ReturnsView({ payload, loading }: { payload: ReturnsPayload; loa
 
 export function ReturnsOverviewAlerts({ payload }: { payload: ReturnsPayload }) {
   const alerts = useMemo(
-    () => buildOverviewAlerts(payload, STALLED_DAYS_THRESHOLD, OPERATIONAL_ERROR_ALERT_INCREASE_POINTS),
+    () => buildOverviewAlerts(payload, RETURNS_QUEUE_RULES, OPERATIONAL_ERROR_ALERT_INCREASE_POINTS),
     [payload],
   );
 
@@ -718,6 +815,20 @@ export function ReturnsOverviewAlerts({ payload }: { payload: ReturnsPayload }) 
 
   return (
     <>
+      {alerts.deadlineDueCount ? (
+        <li>
+          <span className="decision-icon warning">
+            <CalendarClock size={17} />
+          </span>
+          <div>
+            <strong>
+              {demoTag}
+              {`${formatNumber(alerts.deadlineDueCount)} ${alerts.deadlineDueCount === 1 ? "devolução com prazo" : "devoluções com prazo"} do vendedor vencido ou vencendo hoje`}
+            </strong>
+            <small>O Mercado Livre espera uma ação da loja. Detalhes em Devoluções.</small>
+          </div>
+        </li>
+      ) : null}
       <li>
         <span className={`decision-icon ${alerts.stalledCount ? "warning" : "good"}`}>
           {alerts.stalledCount ? <AlertTriangle size={17} /> : <CheckCircle2 size={17} />}
@@ -726,10 +837,12 @@ export function ReturnsOverviewAlerts({ payload }: { payload: ReturnsPayload }) 
           <strong>
             {demoTag}
             {alerts.stalledCount
-              ? `${formatNumber(alerts.stalledCount)} ${alerts.stalledCount === 1 ? "devolução parada" : "devoluções paradas"} há mais de ${STALLED_DAYS_THRESHOLD} dias`
+              ? `${formatNumber(alerts.stalledCount)} ${alerts.stalledCount === 1 ? "devolução parada" : "devoluções paradas"}`
               : "Nenhuma devolução parada"}
           </strong>
-          <small>Devoluções em aberto sem mudar de etapa. Detalhes em Devoluções.</small>
+          <small>
+            Abertas com a data prevista do Mercado Livre vencida ou sem atualização há {RETURNS_QUEUE_RULES.stalledDaysWithoutUpdate}+ dias. Detalhes em Devoluções.
+          </small>
         </div>
       </li>
       {alerts.operationalError?.triggered ? (
