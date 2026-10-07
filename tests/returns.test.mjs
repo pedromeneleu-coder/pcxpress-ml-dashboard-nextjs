@@ -205,6 +205,25 @@ test("alertas da Visão geral ficam ocultos sem dados", { skip: skipTs }, () => 
   assert.equal(ready.stalledCount, 1);
 });
 
+test("dados fictícios: site oficial só até existirem devoluções reais", { skip: skipTs }, () => {
+  const mode = (env) => metrics.resolveDemoMode(env);
+  assert.equal(mode({ VERCEL_ENV: "production" }), "until_real_data");
+  assert.equal(mode({ VERCEL_ENV: "production", RETURNS_DEMO_MODE: "false" }), "off");
+  assert.equal(mode({ VERCEL_ENV: "preview" }), "forced");
+  assert.equal(mode({ VERCEL_ENV: "preview", RETURNS_DEMO_MODE: "false" }), "off");
+  assert.equal(mode({}), "off");
+  assert.equal(mode({ RETURNS_DEMO_MODE: "true" }), "forced");
+
+  const show = metrics.shouldShowDemo;
+  assert.equal(show("until_real_data", null), false);
+  assert.equal(show("until_real_data", "tables_missing"), true);
+  assert.equal(show("until_real_data", "empty"), true);
+  assert.equal(show("until_real_data", "ready"), false);
+  assert.equal(show("until_real_data", "error"), false);
+  assert.equal(show("forced", "ready"), true);
+  assert.equal(show("off", "empty"), false);
+});
+
 test("migração de devoluções só cria objetos e não guarda dados pessoais", async () => {
   const sql = await readFile(new URL("supabase/migrations/2026-10-05_devolucoes.sql", root), "utf8");
   const code = sql.replace(/--.*$/gm, "");
@@ -231,9 +250,8 @@ test("seção Devoluções entra no menu sem alterar as demais e mantém regras 
   assert.match(page, /<ReturnsOverviewAlerts payload=\{returns\} \/>/);
   assert.match(config, /export const RETURN_STATUS_TO_STAGE/);
   assert.match(config, /export const STALLED_DAYS_THRESHOLD = 7;/);
-  assert.match(server, /if \(env\.VERCEL_ENV === "production"\) return false;/);
-  assert.match(server, /if \(env\.VERCEL_ENV === "preview"\) return env\.RETURNS_DEMO_MODE !== "false";/);
-  assert.match(server, /return env\.RETURNS_DEMO_MODE === "true";/);
+  assert.match(server, /const mode = resolveDemoMode\(process\.env\);/);
+  assert.match(server, /shouldShowDemo\(mode, real\.status\) \? buildDemoReturnsPayload\(window\) : real/);
   assert.doesNotMatch(server, /SUPABASE_SERVICE_ROLE_KEY|NEXT_PUBLIC_/);
   assert.match(view, /Aguardando dados de devoluções/);
   assert.match(view, /Aguardando classificação dos motivos/);

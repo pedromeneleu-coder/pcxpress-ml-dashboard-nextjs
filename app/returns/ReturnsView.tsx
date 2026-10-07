@@ -660,6 +660,7 @@ export function ReturnsView({ payload, loading }: { payload: ReturnsPayload; loa
             <span>
               Todos os números, pedidos e anúncios desta seção são inventados para mostrar como a tela vai funcionar.
               Não são devoluções reais da PCXpress e não vêm do Mercado Livre nem do Supabase.
+              Quando as devoluções reais começarem a ser importadas, esta demonstração sai do ar automaticamente.
             </span>
           </div>
         </div>
