@@ -1,5 +1,5 @@
 import { INCLUDE_PNR, RETURN_STATUS_TO_STAGE } from "@/app/returns/returns-config";
-import { emptyReturnsPayload, resolveStage } from "@/app/returns/returns-metrics";
+import { emptyReturnsPayload, resolveDemoMode, resolveStage, shouldShowDemo } from "@/app/returns/returns-metrics";
 import type {
   ReasonFamily,
   ReturnReason,
@@ -159,24 +159,18 @@ function salesPeriodFilter(window: ReturnsWindow): Record<string, string> {
     : { and: `(data_venda.gte.${window.currentStart},data_venda.lte.${window.currentEnd})` };
 }
 
-/**
- * Quando os dados fictícios aparecem:
- * - site oficial na Vercel (VERCEL_ENV=production): NUNCA, mesmo com a variável;
- * - links de prévia da Vercel (VERCEL_ENV=preview): SIM por padrão, para mostrar
- *   o layout online; desliga com RETURNS_DEMO_MODE=false nas variáveis da Vercel;
- * - computador local: só com RETURNS_DEMO_MODE=true no .env.local.
- */
-export function isDemoModeEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  if (env.VERCEL_ENV === "production") return false;
-  if (env.VERCEL_ENV === "preview") return env.RETURNS_DEMO_MODE !== "false";
-  return env.RETURNS_DEMO_MODE === "true";
+export async function getReturnsData(window: ReturnsWindow): Promise<ReturnsPayload> {
+  // Regra completa em resolveDemoMode/shouldShowDemo (app/returns/returns-metrics.ts).
+  // No site oficial, os dados fictícios saem sozinhos quando a ingestão gravar
+  // a primeira devolução real.
+  const mode = resolveDemoMode(process.env);
+  if (shouldShowDemo(mode, null)) return buildDemoReturnsPayload(window);
+
+  const real = await getRealReturnsData(window);
+  return shouldShowDemo(mode, real.status) ? buildDemoReturnsPayload(window) : real;
 }
 
-export async function getReturnsData(window: ReturnsWindow): Promise<ReturnsPayload> {
-  if (isDemoModeEnabled()) {
-    return buildDemoReturnsPayload(window);
-  }
-
+async function getRealReturnsData(window: ReturnsWindow): Promise<ReturnsPayload> {
   const config = readConfig();
   if (!config) {
     return emptyReturnsPayload(window, "not_configured", "Supabase não configurado neste ambiente.");

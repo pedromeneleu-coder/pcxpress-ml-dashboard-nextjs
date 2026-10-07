@@ -76,6 +76,34 @@ export function emptyReturnsPayload(
   };
 }
 
+/**
+ * Quando mostrar os dados fictícios de demonstração:
+ * - off: nunca;
+ * - forced: sempre (prévias da Vercel e computador local com RETURNS_DEMO_MODE=true);
+ * - until_real_data: só enquanto não houver devoluções reais (site oficial).
+ */
+export type ReturnsDemoMode = "off" | "forced" | "until_real_data";
+
+export function resolveDemoMode(env: Record<string, string | undefined>): ReturnsDemoMode {
+  if (env.RETURNS_DEMO_MODE === "false") return "off";
+  if (env.VERCEL_ENV === "production") return "until_real_data";
+  if (env.VERCEL_ENV === "preview") return "forced";
+  return env.RETURNS_DEMO_MODE === "true" ? "forced" : "off";
+}
+
+/**
+ * Situações em que ainda não existe nenhuma devolução real para mostrar.
+ * Falha de leitura ("error") NÃO entra: um problema no banco nunca vira
+ * dado fictício no site oficial.
+ */
+const STATUSES_WITHOUT_REAL_DATA: readonly ReturnsDataStatus[] = ["tables_missing", "empty", "not_configured"];
+
+export function shouldShowDemo(mode: ReturnsDemoMode, realStatus: ReturnsDataStatus | null): boolean {
+  if (mode === "forced") return true;
+  if (mode === "off" || realStatus === null) return false;
+  return STATUSES_WITHOUT_REAL_DATA.includes(realStatus);
+}
+
 /** Converte um instante em data AAAA-MM-DD no calendário de São Paulo. */
 export function saoPauloDate(value: string | null | undefined): string | null {
   if (!value) return null;
