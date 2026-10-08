@@ -1,10 +1,12 @@
 /**
  * MODO DEMONSTRAÇÃO — dados FICTÍCIOS, apenas para visualizar o layout.
  *
- * - Desligado por padrão. Liga só com RETURNS_DEMO_MODE=true no .env.local e
- *   apenas fora de produção (pnpm run dev). Ver lib/supabase-returns.ts.
+ * - Quando aparece: ver resolveDemoMode/shouldShowDemo (app/returns/returns-metrics.ts).
+ *   No site oficial, só enquanto não houver devoluções reais.
  * - Nada daqui é gravado no Supabase. Os números não representam a PCXpress.
- * - Todos os identificadores começam com "DEMO-".
+ * - Todos os identificadores começam com "DEMO-". A fila imita o vocabulário
+ *   da planilha "pcxpress-fila-devolucoes" (etapas, status, destinos e ações),
+ *   sem copiar nenhum caso real.
  */
 
 import { RETURN_STATUS_TO_STAGE } from "@/app/returns/returns-config";
@@ -59,6 +61,126 @@ function addDays(date: string, days: number): string {
   return isoDate(Date.parse(`${date}T12:00:00Z`) + days * DAY_MS);
 }
 
+type DemoScenario = {
+  caseType: string;
+  returnStatusText: string;
+  statusDescription: string;
+  returnDestination: string;
+  pendingAction: string;
+  /** Dias após a última atualização em que o ML promete algo (data prevista). */
+  expectedAfterDays?: number;
+  /** O ML dá prazo para a loja agir. */
+  sellerDeadline?: boolean;
+  /** Resultado da revisão, quando já revisado. */
+  result?: string;
+  tracking?: boolean;
+};
+
+// Cenários de casos abertos por etapa, com o vocabulário da planilha de fila.
+const OPEN_SCENARIOS: Record<"aberta" | "enviada_pelo_comprador" | "recebida" | "revisada", DemoScenario[]> = {
+  aberta: [
+    {
+      caseType: "Reclamação",
+      returnStatusText: "Aguardando comprador iniciar devolução",
+      statusDescription: "Reclamação com devolução habilitada — o comprador já pode iniciar a devolução.",
+      returnDestination: "—",
+      pendingAction: "Nenhuma — aguardar comprador",
+    },
+    {
+      caseType: "Devolução",
+      returnStatusText: "Em preparação pelo comprador",
+      statusDescription: "Devolução em preparação — o comprador ainda não postou o produto.",
+      returnDestination: "A definir",
+      pendingAction: "Nenhuma — aguardar envio",
+    },
+    {
+      caseType: "Mediação",
+      returnStatusText: "Em análise pelo ML",
+      statusDescription: "O Mercado Livre está analisando o caso — acompanhe a conversa.",
+      returnDestination: "—",
+      pendingAction: "Acompanhar a conversa do caso e responder ao ML",
+      sellerDeadline: true,
+    },
+  ],
+  enviada_pelo_comprador: [
+    {
+      caseType: "Devolução",
+      returnStatusText: "A caminho do CD do ML para revisão",
+      statusDescription: "Em devolução — o produto está indo para o centro de distribuição do ML para revisão.",
+      returnDestination: "CD Mercado Livre (Full)",
+      pendingAction: "Nenhuma — aguardar resultado da revisão",
+      expectedAfterDays: 6,
+      tracking: true,
+    },
+    {
+      caseType: "Devolução",
+      returnStatusText: "A caminho do vendedor",
+      statusDescription: "Devolução a caminho do seu endereço — use o código de autorização ao receber.",
+      returnDestination: "Vendedor",
+      pendingAction: "Receber com código de autorização e conferir",
+      expectedAfterDays: 5,
+      tracking: true,
+    },
+    {
+      caseType: "Retorno (não entregue)",
+      returnStatusText: "Voltando ao vendedor",
+      statusDescription: "O envio não foi entregue e está voltando para a loja.",
+      returnDestination: "Vendedor",
+      pendingAction: "Receber e reestocar",
+      expectedAfterDays: 7,
+      tracking: true,
+    },
+  ],
+  recebida: [
+    {
+      caseType: "Devolução",
+      returnStatusText: "Entregue ao vendedor — revisão pendente",
+      statusDescription: "Devolução para revisar — avise o ML como o produto chegou dentro do prazo.",
+      returnDestination: "Vendedor",
+      pendingAction: "Revisar o produto e informar ao ML (\"Já revisei\")",
+      sellerDeadline: true,
+      tracking: true,
+    },
+    {
+      caseType: "Devolução",
+      returnStatusText: "Em revisão no CD do ML",
+      statusDescription: "O produto chegou ao centro de distribuição e está em revisão pelo ML.",
+      returnDestination: "CD Mercado Livre (Full)",
+      pendingAction: "Nenhuma — aguardar resultado da revisão",
+      expectedAfterDays: 4,
+      tracking: true,
+    },
+  ],
+  revisada: [
+    {
+      caseType: "Devolução",
+      returnStatusText: "Revisado — produto parado no CD do ML",
+      statusDescription: "Devolução revisada. Solicite a retirada do produto no centro de distribuição.",
+      returnDestination: "CD Mercado Livre (Full)",
+      pendingAction: "Solicitar a retirada do produto no CD",
+      result: "Não apto para venda",
+      tracking: true,
+    },
+    {
+      caseType: "Devolução",
+      returnStatusText: "Revisado pelo ML — prazo para contestar",
+      statusDescription: "Devolução entregue e revisada pelo ML — se discordar, peça ajuda dentro do prazo.",
+      returnDestination: "Vendedor",
+      pendingAction: "Se discordar da revisão, pedir ajuda ao ML",
+      sellerDeadline: true,
+      result: "Apto para venda",
+      tracking: true,
+    },
+  ],
+};
+
+const REVIEW_REASONS = [
+  "não está em boas condições (exemplo)",
+  "apresenta marcas de uso (exemplo)",
+  "a caixa original está danificada (exemplo)",
+  "não funciona (exemplo)",
+];
+
 type DemoPath = { status: string; offsetDays: number }[];
 
 // Trajetórias de status (status bruto + dias após a abertura).
@@ -109,6 +231,34 @@ export function buildDemoReturnsPayload(window: ReturnsWindow): ReturnsPayload {
       return step ? new Date(openedTime + step.offsetDays * DAY_MS).toISOString() : null;
     };
     const ingested = resolveStage(last.status, null, RETURN_STATUS_TO_STAGE);
+    const lastUpdatedAt = new Date(openedTime + last.offsetDays * DAY_MS).toISOString();
+    const saleAmount = units * unitPrice;
+    const stage = ingested.stage;
+    const isOpen = stage === "aberta" || stage === "enviada_pelo_comprador" || stage === "recebida" || stage === "revisada";
+    const scenarios = isOpen ? OPEN_SCENARIOS[stage] : null;
+    const scenario: DemoScenario = scenarios
+      ? scenarios[Math.floor(random() * scenarios.length)]
+      : stage === "reembolsada"
+        ? {
+            caseType: "Devolução",
+            returnStatusText: "Reembolsado ao comprador",
+            statusDescription: "Caso encerrado — o comprador foi reembolsado.",
+            returnDestination: "Vendedor",
+            pendingAction: "Nenhuma — caso encerrado",
+            result: random() < 0.6 ? "Não apto para venda" : "Apto para venda",
+            tracking: true,
+          }
+        : {
+            caseType: "Reclamação",
+            returnStatusText: "Encerrado sem devolução",
+            statusDescription: "Caso encerrado sem o produto voltar.",
+            returnDestination: "—",
+            pendingAction: "Nenhuma — caso encerrado",
+          };
+    const lastUpdateTime = openedTime + last.offsetDays * DAY_MS;
+    // Prazos espalhados entre anteontem e daqui a 2 dias, para mostrar vencido, hoje e próximo.
+    const sellerActionDueAt = scenario.sellerDeadline ? isoDate(now + ((index % 5) - 2) * DAY_MS) : null;
+    const reviewed = Boolean(scenario.result);
 
     records.push({
       claimId,
@@ -126,11 +276,28 @@ export function buildDemoReturnsPayload(window: ReturnsWindow): ReturnsPayload {
       buyerShippedAt: at("shipped"),
       receivedAt: at("delivered"),
       refundedAt: at("refunded"),
-      lastUpdatedAt: new Date(openedTime + last.offsetDays * DAY_MS).toISOString(),
+      lastUpdatedAt,
       returnedUnits: units,
-      returnedAmount: units * unitPrice,
+      returnedAmount: saleAmount,
       returnShippingCost: random() < 0.9 ? Math.round((25 + random() * 70) * 100) / 100 : null,
       logisticType: LOGISTIC_TYPES[Math.floor(random() * LOGISTIC_TYPES.length)],
+      sku: `DEMO-SKU-${String(listingIndex + 1).padStart(2, "0")}`,
+      quantity: units,
+      saleAmount,
+      refundedAmount: reviewed || stage === "reembolsada" ? Math.round(saleAmount * 0.95 * 100) / 100 : null,
+      buyerNickname: `COMPRADOR.DEMO${index}`,
+      reasonText: reviewed ? REVIEW_REASONS[Math.floor(random() * REVIEW_REASONS.length)] : null,
+      caseType: scenario.caseType,
+      claimStatus: isOpen ? "opened" : "closed",
+      returnStatusText: scenario.returnStatusText,
+      statusDescription: scenario.statusDescription,
+      expectedAt: scenario.expectedAfterDays ? isoDate(lastUpdateTime + scenario.expectedAfterDays * DAY_MS) : null,
+      returnDestination: scenario.returnDestination,
+      trackingNumber: scenario.tracking ? `DEMO${String(700000 + index)}BR` : null,
+      sellerActionDueAt,
+      pendingAction: scenario.pendingAction,
+      result: scenario.result ?? null,
+      syncedAt: generatedAt,
     });
 
     for (const step of steps) {

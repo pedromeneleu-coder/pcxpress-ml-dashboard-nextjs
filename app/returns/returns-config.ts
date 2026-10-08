@@ -46,8 +46,17 @@ export const RETURN_STATUS_TO_STAGE: Record<string, ReturnStage> = {
   // sem devolução. Decida com a ingestão antes de incluir.
 };
 
-/** Devoluções paradas na mesma etapa há mais de X dias ganham destaque. */
-export const STALLED_DAYS_THRESHOLD = 7;
+/**
+ * Regras da fila (iguais às da planilha "pcxpress-fila-devolucoes"):
+ * - Parado: caso aberto e (a data prevista do ML já passou, ou está sem
+ *   atualização do ML há este número de dias ou mais). PROVISÓRIO: 3 dias,
+ *   sugerido pela Aruna; definir com a operação da PCXpress.
+ * - Prazo do vendedor: "≤ N dias" quando o prazo vence nos próximos N dias.
+ */
+export const RETURNS_QUEUE_RULES = {
+  stalledDaysWithoutUpdate: 3,
+  deadlineWarningDays: 2,
+};
 
 /**
  * Meses de venda que terminaram há menos de N dias são "provisórios": novas

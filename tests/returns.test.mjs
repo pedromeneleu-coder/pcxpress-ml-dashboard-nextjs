@@ -39,6 +39,23 @@ function record(overrides = {}) {
     returnedAmount: 1000,
     returnShippingCost: 50,
     logisticType: "cross_docking",
+    sku: "SKU1",
+    quantity: 1,
+    saleAmount: 1000,
+    refundedAmount: null,
+    buyerNickname: null,
+    reasonText: null,
+    caseType: "Devolução",
+    claimStatus: "opened",
+    returnStatusText: "Em análise pelo ML",
+    statusDescription: null,
+    expectedAt: null,
+    returnDestination: null,
+    trackingNumber: null,
+    sellerActionDueAt: null,
+    pendingAction: null,
+    result: null,
+    syncedAt: null,
     ...overrides,
   };
 }
@@ -65,6 +82,8 @@ function payload(overrides = {}) {
 }
 
 const ALL = { logistics: "all", family: "all" };
+// Mesmas regras da planilha de fila: parado com 3+ dias sem atualização; aviso de prazo em até 2 dias.
+const RULES = { stalledDaysWithoutUpdate: 3, deadlineWarningDays: 2 };
 
 test("traduz status pela configuração, depois pela ingestão, sem esconder status desconhecido", { skip: skipTs }, () => {
   assert.deepEqual(metrics.resolveStage("Shipped", null, MAPPING), { stage: "enviada_pelo_comprador", source: "config" });
@@ -72,44 +91,56 @@ test("traduz status pela configuração, depois pela ingestão, sem esconder sta
   assert.deepEqual(metrics.resolveStage("novo_status_ml", null, MAPPING), { stage: null, source: "nao_mapeada" });
 });
 
-test("conta dias parada a partir da entrada na etapa atual", { skip: skipTs }, () => {
-  const item = record({ stage: "recebida", rawStatus: "delivered" });
-  const history = [
-    { claimId: "C1", rawStatus: "opened", stage: "aberta", occurredAt: "2026-09-20T12:00:00.000Z" },
-    { claimId: "C1", rawStatus: "shipped", stage: "enviada_pelo_comprador", occurredAt: "2026-09-22T12:00:00.000Z" },
-    { claimId: "C1", rawStatus: "delivered", stage: "recebida", occurredAt: "2026-09-25T12:00:00.000Z" },
-  ];
-  assert.equal(metrics.daysInStage(item, history, "2026-10-05T15:00:00.000Z"), 10);
+test("regras da fila iguais às da planilha: prazo, ação do vendedor e parado", { skip: skipTs }, () => {
+  const today = "2026-10-05";
+  const row = (overrides) => metrics.buildQueueRow(record(overrides), today, RULES);
+
+  assert.equal(row({ sellerActionDueAt: "2026-10-04" }).deadline, "vencido");
+  assert.equal(row({ sellerActionDueAt: "2026-10-05" }).deadline, "hoje");
+  assert.equal(row({ sellerActionDueAt: "2026-10-07" }).deadline, "proximo");
+  assert.equal(row({ sellerActionDueAt: "2026-10-09" }).deadline, "ok");
+  assert.equal(row({ sellerActionDueAt: "2026-10-04", claimStatus: "closed" }).deadline, null);
+
+  assert.equal(row({ pendingAction: "Solicitar a retirada do produto no CD" }).awaitingSellerAction, true);
+  assert.equal(row({ pendingAction: "Nenhuma — aguardar comprador" }).awaitingSellerAction, false);
+
+  assert.equal(row({ lastUpdatedAt: "2026-10-02T12:00:00.000Z" }).stalled, true);
+  assert.equal(row({ lastUpdatedAt: "2026-10-03T12:00:00.000Z" }).stalled, false);
+  assert.equal(row({ lastUpdatedAt: "2026-10-04T12:00:00.000Z", expectedAt: "2026-10-04" }).stalled, true);
+  assert.equal(row({ lastUpdatedAt: null, expectedAt: null }).stalled, false);
+  assert.equal(row({ lastUpdatedAt: "2026-09-01T12:00:00.000Z", claimStatus: "closed" }).stalled, false);
+  assert.equal(metrics.saoPauloDate("2026-10-04"), "2026-10-04");
 });
 
-test("acompanhamento mostra só o que está em aberto hoje, por etapa", { skip: skipTs }, () => {
+test("acompanhamento segue o Resumo da planilha e a ordem de prioridade", { skip: skipTs }, () => {
   const data = payload({
     records: [
-      record({ claimId: "A", stage: "aberta", openedAt: "2026-10-01T12:00:00.000Z" }),
-      record({ claimId: "B", stage: "aberta", openedAt: "2026-09-01T12:00:00.000Z" }),
-      record({ claimId: "R", stage: "revisada", openedAt: "2026-09-25T12:00:00.000Z", lastUpdatedAt: "2026-09-30T12:00:00.000Z" }),
-      record({ claimId: "Z", stage: null, rawStatus: "status_novo" }),
-      record({ claimId: "C", stage: "reembolsada", refundedAt: "2026-09-10T12:00:00.000Z" }),
-      record({ claimId: "E", stage: "encerrada_sem_devolucao" }),
+      record({ claimId: "REST", lastUpdatedAt: "2026-10-04T12:00:00.000Z", saleAmount: 100 }),
+      record({ claimId: "STALLED", lastUpdatedAt: "2026-09-20T12:00:00.000Z", saleAmount: 200, returnStatusText: "Revisado — produto parado no CD do ML" }),
+      record({ claimId: "ACTION", lastUpdatedAt: "2026-10-04T12:00:00.000Z", pendingAction: "Receber e reestocar", saleAmount: 300 }),
+      record({ claimId: "DUE", lastUpdatedAt: "2026-10-04T12:00:00.000Z", sellerActionDueAt: "2026-10-05", pendingAction: "Revisar o produto", saleAmount: 400 }),
+      record({ claimId: "CLOSED", claimStatus: "closed", stage: "reembolsada", saleAmount: 999 }),
     ],
   });
-  const tracking = metrics.buildTracking(data, ALL, 7);
-  const byStage = Object.fromEntries(tracking.stages.map((item) => [item.stage, item]));
+  const tracking = metrics.buildTracking(data, ALL, RULES);
 
-  assert.deepEqual(tracking.stages.map((item) => item.stage), ["aberta", "enviada_pelo_comprador", "recebida", "revisada"]);
-  assert.deepEqual(byStage.aberta, { stage: "aberta", count: 2, stalled: 1 });
-  assert.deepEqual(byStage.revisada, { stage: "revisada", count: 1, stalled: 0 });
-  assert.equal(tracking.totalOpen, 4);
-  assert.equal(tracking.unmappedOpen, 1);
-  assert.equal(tracking.openRows.some((row) => row.claimId === "C" || row.claimId === "E"), false);
-  assert.equal(tracking.openRows[0].claimId, "B");
-  assert.equal(tracking.stalledCount, 2);
+  assert.deepEqual(tracking.rows.map((row) => row.record.claimId), ["DUE", "ACTION", "STALLED", "REST"]);
+  assert.equal(tracking.openCount, 4);
+  assert.equal(tracking.openSaleAmount, 1000);
+  assert.equal(tracking.deadlineDueCount, 1);
+  assert.equal(tracking.awaitingActionCount, 2);
+  assert.equal(tracking.stalledCount, 1);
+  assert.equal(tracking.stalledSaleAmount, 200);
+  assert.deepEqual(tracking.byReturnStatus, [
+    { label: "Em análise pelo ML", count: 3, saleAmount: 800 },
+    { label: "Revisado — produto parado no CD do ML", count: 1, saleAmount: 200 },
+  ]);
 });
 
 test("acompanhamento não muda com o filtro de datas", { skip: skipTs }, () => {
   const records = [
-    record({ claimId: "OLD", stage: "aberta", openedAt: "2025-12-01T12:00:00.000Z", saleDate: "2025-11-20" }),
-    record({ claimId: "NEW", stage: "recebida", openedAt: "2026-10-03T12:00:00.000Z" }),
+    record({ claimId: "OLD", openedAt: "2025-12-01T12:00:00.000Z", saleDate: "2025-11-20" }),
+    record({ claimId: "NEW", openedAt: "2026-10-03T12:00:00.000Z" }),
   ];
   const septemberWindow = payload({ records });
   const januaryWindow = payload({
@@ -118,10 +149,10 @@ test("acompanhamento não muda com o filtro de datas", { skip: skipTs }, () => {
   });
 
   assert.deepEqual(
-    metrics.buildTracking(januaryWindow, ALL, 7),
-    metrics.buildTracking(septemberWindow, ALL, 7),
+    metrics.buildTracking(januaryWindow, ALL, RULES),
+    metrics.buildTracking(septemberWindow, ALL, RULES),
   );
-  assert.equal(metrics.buildTracking(septemberWindow, ALL, 7).totalOpen, 2);
+  assert.equal(metrics.buildTracking(septemberWindow, ALL, RULES).openCount, 2);
 });
 
 test("motivos e anúncios do Fechamento seguem a data da venda", { skip: skipTs }, () => {
@@ -152,7 +183,7 @@ test("filtros separam Full e família do motivo", { skip: skipTs }, () => {
       record({ claimId: "N", logisticType: null }),
     ],
   });
-  const count = (filters) => metrics.buildTracking(data, filters, 7).openRows.length;
+  const count = (filters) => metrics.buildTracking(data, filters, RULES).rows.length;
   assert.equal(count({ logistics: "exclude_fulfillment", family: "all" }), 2);
   assert.equal(count({ logistics: "fulfillment", family: "all" }), 1);
   assert.equal(count({ logistics: "flex", family: "all" }), 1);
@@ -198,11 +229,14 @@ test("fechamento calcula pelo mês da venda e nunca grava zero falso", { skip: s
 });
 
 test("alertas da Visão geral ficam ocultos sem dados", { skip: skipTs }, () => {
-  assert.equal(metrics.buildOverviewAlerts(payload({ status: "empty" }), 7, 5).visible, false);
-  assert.equal(metrics.buildOverviewAlerts(payload({ status: "tables_missing" }), 7, 5).visible, false);
-  const ready = metrics.buildOverviewAlerts(payload({ records: [record({ openedAt: "2026-09-01T12:00:00.000Z" })] }), 7, 5);
+  assert.equal(metrics.buildOverviewAlerts(payload({ status: "empty" }), RULES, 5).visible, false);
+  assert.equal(metrics.buildOverviewAlerts(payload({ status: "tables_missing" }), RULES, 5).visible, false);
+  const ready = metrics.buildOverviewAlerts(payload({
+    records: [record({ lastUpdatedAt: "2026-09-01T12:00:00.000Z", sellerActionDueAt: "2026-10-04" })],
+  }), RULES, 5);
   assert.equal(ready.visible, true);
   assert.equal(ready.stalledCount, 1);
+  assert.equal(ready.deadlineDueCount, 1);
 });
 
 test("dados fictícios: site oficial só até existirem devoluções reais", { skip: skipTs }, () => {
@@ -238,6 +272,18 @@ test("migração de devoluções só cria objetos e não guarda dados pessoais",
   assert.doesNotMatch(code, /percent|taxa_|media_/i);
 });
 
+test("migração da fila só acrescenta colunas e guarda só o apelido do comprador", async () => {
+  const sql = await readFile(new URL("supabase/migrations/2026-10-08_devolucoes_fila.sql", root), "utf8");
+  const code = sql.replace(/--.*$/gm, "");
+
+  assert.match(code, /alter table ml_dashboards\.devolucoes\s+add column if not exists sku text/);
+  for (const column of ["valor_venda", "valor_reembolsado", "comprador_apelido", "status_retorno", "prazo_acao_vendedor", "acao_pendente", "resultado"]) {
+    assert.match(code, new RegExp(`add column if not exists ${column} `));
+  }
+  assert.doesNotMatch(code, /\bdrop\s|\bdelete\s+from|\binsert\s+into|\btruncate\b|\brename\b/i);
+  assert.doesNotMatch(code, /comprador_nome|cpf|endereco|telefone|mensage/i);
+});
+
 test("seção Devoluções entra no menu sem alterar as demais e mantém regras isoladas", async () => {
   const [page, config, server, view] = await Promise.all([
     readFile(new URL("app/page.tsx", root), "utf8"),
@@ -249,7 +295,7 @@ test("seção Devoluções entra no menu sem alterar as demais e mantém regras 
   assert.match(page, /\{ id: "returns", label: "Devoluções", icon: Undo2 \}/);
   assert.match(page, /<ReturnsOverviewAlerts payload=\{returns\} \/>/);
   assert.match(config, /export const RETURN_STATUS_TO_STAGE/);
-  assert.match(config, /export const STALLED_DAYS_THRESHOLD = 7;/);
+  assert.match(config, /stalledDaysWithoutUpdate: 3,/);
   assert.match(server, /const mode = resolveDemoMode\(process\.env\);/);
   assert.match(server, /shouldShowDemo\(mode, real\.status\) \? buildDemoReturnsPayload\(window\) : real/);
   assert.doesNotMatch(server, /SUPABASE_SERVICE_ROLE_KEY|NEXT_PUBLIC_/);

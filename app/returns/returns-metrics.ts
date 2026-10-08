@@ -14,7 +14,6 @@ import type {
   ReturnReason,
   ReturnRecord,
   ReturnStage,
-  ReturnStatusEvent,
   ReturnsDataStatus,
   ReturnsFilters,
   ReturnsPayload,
@@ -107,6 +106,9 @@ export function shouldShowDemo(mode: ReturnsDemoMode, realStatus: ReturnsDataSta
 /** Converte um instante em data AAAA-MM-DD no calendário de São Paulo. */
 export function saoPauloDate(value: string | null | undefined): string | null {
   if (!value) return null;
+  // Data pura já está no calendário certo; convertê-la como instante UTC
+  // voltaria um dia em São Paulo.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const time = Date.parse(value);
   return Number.isFinite(time) ? SAO_PAULO_DATE.format(new Date(time)) : null;
 }
@@ -159,99 +161,49 @@ export function matchesFilters(record: ReturnRecord, filters: ReturnsFilters): b
   return true;
 }
 
-export function groupHistory(history: ReturnStatusEvent[]): Map<string, ReturnStatusEvent[]> {
-  const grouped = new Map<string, ReturnStatusEvent[]>();
-
-  for (const event of history) {
-    if (!Number.isFinite(Date.parse(event.occurredAt))) continue;
-    const events = grouped.get(event.claimId) ?? [];
-    events.push(event);
-    grouped.set(event.claimId, events);
-  }
-
-  for (const events of grouped.values()) {
-    events.sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt));
-  }
-
-  return grouped;
-}
-
-function stageDateField(record: ReturnRecord, stage: ReturnStage | null): string | null {
-  switch (stage) {
-    case "aberta":
-      return record.openedAt;
-    case "enviada_pelo_comprador":
-      return record.buyerShippedAt;
-    case "recebida":
-      return record.receivedAt;
-    case "reembolsada":
-      return record.refundedAt;
-    default:
-      return null;
-  }
-}
-
-/** Momento em que a devolução entrou na etapa atual. */
-export function stageSince(record: ReturnRecord, events: ReturnStatusEvent[] = []): string | null {
-  if (record.stage) {
-    let since: string | null = null;
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      if (events[index].stage !== record.stage) break;
-      since = events[index].occurredAt;
-    }
-    if (since) return since;
-  }
-
-  return stageDateField(record, record.stage) ?? record.lastUpdatedAt ?? record.openedAt;
-}
-
-export function daysInStage(
-  record: ReturnRecord,
-  events: ReturnStatusEvent[] | undefined,
-  asOf: string,
-): number | null {
-  const since = stageSince(record, events);
-  const sinceTime = since ? Date.parse(since) : Number.NaN;
-  const asOfTime = Date.parse(asOf);
-  if (!Number.isFinite(sinceTime) || !Number.isFinite(asOfTime)) return null;
-  return Math.max(0, Math.floor((asOfTime - sinceTime) / DAY_MS));
-}
-
 // -----------------------------------------------------------------------------
-// A. Acompanhamento (situação de hoje; não depende do filtro de datas)
+// A. Acompanhamento — fila de casos abertos (mesmas regras da planilha
+// "pcxpress-fila-devolucoes", abas Devoluções e Resumo). Situação de hoje;
+// não depende do filtro de datas.
 // -----------------------------------------------------------------------------
 
-export type OpenStageSummary = {
-  stage: ReturnStage;
-  count: number;
-  /** Paradas na etapa há mais dias que o limite configurado. */
-  stalled: number;
-};
+/** Situação do prazo para ação do vendedor (coluna "Prazo do vendedor" da planilha). */
+export type SellerDeadline = "vencido" | "hoje" | "proximo" | "ok";
 
-export type OpenReturnRow = {
-  claimId: string;
-  orderId: string | null;
-  mlbId: string | null;
-  listingTitle: string | null;
-  reasonId: string | null;
-  reasonName: string | null;
-  family: ReasonFamily | null;
-  stage: ReturnStage | null;
-  rawStatus: string | null;
-  daysInStage: number | null;
-  amount: number | null;
+export type QueueRow = {
+  record: ReturnRecord;
+  /** Nome do motivo: texto do ML; se ausente, nome do dicionário de motivos. */
+  reasonText: string | null;
+  /** Dias desde a última atualização do ML (null quando não informada). */
+  daysWithoutUpdate: number | null;
+  /** Aberto e (data prevista do ML já passou ou sem atualização há ≥ limite). */
   stalled: boolean;
+  deadline: SellerDeadline | null;
+  /** Ação pendente informada e diferente de "Nenhuma…". */
+  awaitingSellerAction: boolean;
+  /** 0 prazo vencido/hoje · 1 aguardando ação · 2 parado · 3 demais. */
+  priority: 0 | 1 | 2 | 3;
 };
+
+export type ReturnStatusGroup = { label: string; count: number; saleAmount: number };
 
 export type TrackingSummary = {
-  /** Uma entrada por etapa em aberto, na ordem do fluxo. */
-  stages: OpenStageSummary[];
-  totalOpen: number;
-  /** Devoluções com status ainda não traduzido para uma etapa. */
-  unmappedOpen: number;
+  openCount: number;
+  openSaleAmount: number;
+  deadlineDueCount: number;
+  awaitingActionCount: number;
   stalledCount: number;
-  /** Ordenadas pelos dias na etapa atual, as mais antigas primeiro. */
-  openRows: OpenReturnRow[];
+  stalledSaleAmount: number;
+  byReturnStatus: ReturnStatusGroup[];
+  /** Fila em ordem de prioridade, como na planilha. */
+  rows: QueueRow[];
+};
+
+export type QueueRules = {
+  /** "Parado" quando sem atualização há este número de dias ou mais. */
+  stalledDaysWithoutUpdate: number;
+  /** "≤ N dias" para o prazo do vendedor. */
+  deadlineWarningDays: number;
 };
 
 function reasonIndex(reasons: ReturnReason[]): Map<string, ReturnReason> {
@@ -262,51 +214,93 @@ function countBy<T>(items: T[], predicate: (item: T) => boolean): number {
   return items.reduce((total, item) => total + (predicate(item) ? 1 : 0), 0);
 }
 
-/**
- * Situação atual das devoluções em aberto. Ignora o período selecionado no
- * painel: uma devolução aberta há meses continua aparecendo até ser concluída.
- */
+/** Caso em aberto: "Status ML = Aberta"; sem essa informação, usa a etapa. */
+export function isOpenCase(record: ReturnRecord): boolean {
+  const status = record.claimStatus?.trim().toLowerCase();
+  if (status === "opened" || status === "aberta") return true;
+  if (status === "closed" || status === "fechada") return false;
+  return record.stage === null || OPEN_RETURN_STAGES.includes(record.stage);
+}
+
+export function sellerDeadline(dueAt: string | null, today: string, warningDays: number): SellerDeadline | null {
+  const due = saoPauloDate(dueAt);
+  if (!due) return null;
+  const diff = daysBetween(today, due);
+  if (diff < 0) return "vencido";
+  if (diff === 0) return "hoje";
+  return diff <= warningDays ? "proximo" : "ok";
+}
+
+export function buildQueueRow(
+  record: ReturnRecord,
+  today: string,
+  rules: QueueRules,
+  reasons: Map<string, ReturnReason> = new Map(),
+): QueueRow {
+  const open = isOpenCase(record);
+  const lastUpdate = saoPauloDate(record.lastUpdatedAt);
+  const expected = saoPauloDate(record.expectedAt);
+  const daysWithoutUpdate = lastUpdate ? daysBetween(lastUpdate, today) : null;
+  const stalled = open && (
+    (expected !== null && expected < today)
+    || (daysWithoutUpdate !== null && daysWithoutUpdate >= rules.stalledDaysWithoutUpdate)
+  );
+  const deadline = open ? sellerDeadline(record.sellerActionDueAt, today, rules.deadlineWarningDays) : null;
+  const action = record.pendingAction?.trim() ?? "";
+  const awaitingSellerAction = open && action !== "" && !/^nenhuma/i.test(action);
+  const priority = deadline === "vencido" || deadline === "hoje" ? 0 : awaitingSellerAction ? 1 : stalled ? 2 : 3;
+
+  return {
+    record,
+    reasonText: record.reasonText ?? (record.reasonId ? reasons.get(record.reasonId)?.name ?? null : null),
+    daysWithoutUpdate,
+    stalled,
+    deadline,
+    awaitingSellerAction,
+    priority,
+  };
+}
+
+/** Ordem da planilha: prazo vencido/hoje → ação do vendedor → parados → demais. */
+export function compareQueueRows(a: QueueRow, b: QueueRow): number {
+  return a.priority - b.priority
+    || (b.daysWithoutUpdate ?? -1) - (a.daysWithoutUpdate ?? -1)
+    || (a.record.openedAt ?? "").localeCompare(b.record.openedAt ?? "");
+}
+
 export function buildTracking(
   payload: ReturnsPayload,
   filters: ReturnsFilters,
-  stalledDaysThreshold: number,
+  rules: QueueRules,
 ): TrackingSummary {
-  const records = payload.records.filter((record) => matchesFilters(record, filters));
-  const history = groupHistory(payload.history);
+  const today = saoPauloDate(payload.generatedAt) ?? payload.window.currentEnd;
   const reasons = reasonIndex(payload.reasons);
+  const rows = payload.records
+    .filter((record) => matchesFilters(record, filters) && isOpenCase(record))
+    .map((record) => buildQueueRow(record, today, rules, reasons))
+    .sort(compareQueueRows);
 
-  const openRows: OpenReturnRow[] = records
-    .filter((record) => record.stage === null || OPEN_RETURN_STAGES.includes(record.stage))
-    .map((record) => {
-      const days = daysInStage(record, history.get(record.claimId), payload.generatedAt);
-      const reason = record.reasonId ? reasons.get(record.reasonId) : undefined;
-      return {
-        claimId: record.claimId,
-        orderId: record.orderId,
-        mlbId: record.mlbId,
-        listingTitle: record.listingTitle,
-        reasonId: record.reasonId,
-        reasonName: reason?.name ?? null,
-        family: record.family ?? reason?.family ?? null,
-        stage: record.stage,
-        rawStatus: record.rawStatus,
-        daysInStage: days,
-        amount: record.returnedAmount,
-        stalled: days !== null && days > stalledDaysThreshold,
-      };
-    })
-    .sort((a, b) => (b.daysInStage ?? -1) - (a.daysInStage ?? -1));
+  const saleAmount = (items: QueueRow[]) => items.reduce((total, row) => total + (row.record.saleAmount ?? 0), 0);
+  const stalledRows = rows.filter((row) => row.stalled);
+  const groups = new Map<string, ReturnStatusGroup>();
+  for (const row of rows) {
+    const label = row.record.returnStatusText
+      ?? (row.record.stage ? RETURN_STAGE_LABELS[row.record.stage] : "Status não informado");
+    const group = groups.get(label) ?? { label, count: 0, saleAmount: 0 };
+    group.count += 1;
+    group.saleAmount += row.record.saleAmount ?? 0;
+    groups.set(label, group);
+  }
 
   return {
-    stages: OPEN_RETURN_STAGES.map((stage) => ({
-      stage,
-      count: countBy(openRows, (row) => row.stage === stage),
-      stalled: countBy(openRows, (row) => row.stage === stage && row.stalled),
-    })),
-    totalOpen: openRows.length,
-    unmappedOpen: countBy(openRows, (row) => row.stage === null),
-    stalledCount: countBy(openRows, (row) => row.stalled),
-    openRows,
+    openCount: rows.length,
+    openSaleAmount: saleAmount(rows),
+    deadlineDueCount: countBy(rows, (row) => row.deadline === "vencido" || row.deadline === "hoje"),
+    awaitingActionCount: countBy(rows, (row) => row.awaitingSellerAction),
+    stalledCount: stalledRows.length,
+    stalledSaleAmount: saleAmount(stalledRows),
+    byReturnStatus: [...groups.values()].sort((x, y) => y.count - x.count || x.label.localeCompare(y.label, "pt-BR")),
+    rows,
   };
 }
 
@@ -564,6 +558,8 @@ export type ReturnsOverviewAlerts = {
   /** false enquanto não houver devoluções: os alertas ficam ocultos. */
   visible: boolean;
   stalledCount: number;
+  /** Casos com prazo do vendedor vencido ou vencendo hoje. */
+  deadlineDueCount: number;
   operationalError: {
     currentPercent: number;
     comparisonPercent: number;
@@ -573,15 +569,15 @@ export type ReturnsOverviewAlerts = {
 
 export function buildOverviewAlerts(
   payload: ReturnsPayload,
-  stalledDaysThreshold: number,
+  rules: QueueRules,
   increasePoints: number,
 ): ReturnsOverviewAlerts {
   if (payload.status !== "ready" || payload.records.length === 0) {
-    return { visible: false, stalledCount: 0, operationalError: null };
+    return { visible: false, stalledCount: 0, deadlineDueCount: 0, operationalError: null };
   }
 
   const all: ReturnsFilters = { logistics: "all", family: "all" };
-  const tracking = buildTracking(payload, all, stalledDaysThreshold);
+  const tracking = buildTracking(payload, all, rules);
   const closing = buildClosing(payload, all, 0);
   const current = closing.current.operationalErrorPercent;
   const comparison = closing.comparison?.operationalErrorPercent ?? null;
@@ -589,6 +585,7 @@ export function buildOverviewAlerts(
   return {
     visible: true,
     stalledCount: tracking.stalledCount,
+    deadlineDueCount: tracking.deadlineDueCount,
     operationalError: current !== null && comparison !== null
       ? {
           currentPercent: current,

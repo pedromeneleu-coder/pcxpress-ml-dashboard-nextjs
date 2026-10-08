@@ -49,6 +49,32 @@ export type ReturnRecord = {
   returnedAmount: number | null;
   returnShippingCost: number | null;
   logisticType: string | null;
+  // Colunas da fila (planilha "pcxpress-fila-devolucoes", aba Devoluções, A–X).
+  sku: string | null;
+  /** Quantidade vendida no pedido (coluna "Qtd"). */
+  quantity: number | null;
+  saleAmount: number | null;
+  refundedAmount: number | null;
+  /** Só o apelido do Mercado Livre; nunca nome, CPF, endereço ou telefone. */
+  buyerNickname: string | null;
+  /** Motivo como o Mercado Livre mostra. */
+  reasonText: string | null;
+  /** Reclamação / Mediação / Devolução / Retorno (não entregue). */
+  caseType: string | null;
+  /** Status da reclamação no ML: opened / closed. */
+  claimStatus: string | null;
+  /** Status do retorno, em português. */
+  returnStatusText: string | null;
+  statusDescription: string | null;
+  /** Data prevista informada pelo ML (chegada, revisão, contato). */
+  expectedAt: string | null;
+  returnDestination: string | null;
+  trackingNumber: string | null;
+  sellerActionDueAt: string | null;
+  pendingAction: string | null;
+  result: string | null;
+  /** Momento em que a linha foi gravada pela ingestão ("Data do sync"). */
+  syncedAt: string | null;
 };
 
 export type ReturnStatusEvent = {
