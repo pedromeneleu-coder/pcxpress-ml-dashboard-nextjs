@@ -131,6 +131,11 @@ test("acompanhamento segue o Resumo da planilha e a ordem de prioridade", { skip
   assert.equal(tracking.awaitingActionCount, 2);
   assert.equal(tracking.stalledCount, 1);
   assert.equal(tracking.stalledSaleAmount, 200);
+
+  // Sem valor de venda na ingestão: "não informado", nunca R$ 0,00.
+  const withoutValues = metrics.buildTracking(payload({ records: [record({ saleAmount: null })] }), ALL, RULES);
+  assert.equal(withoutValues.openSaleAmount, null);
+  assert.equal(withoutValues.byReturnStatus[0].saleAmount, null);
   assert.deepEqual(tracking.byReturnStatus, [
     { label: "Em análise pelo ML", count: 3, saleAmount: 800 },
     { label: "Revisado — produto parado no CD do ML", count: 1, saleAmount: 200 },
@@ -258,6 +263,15 @@ test("dados fictícios: site oficial só até existirem devoluções reais", { s
   assert.equal(show("off", "empty"), false);
 });
 
+test("só tabela inexistente liga a demonstração; coluna inexistente é erro", { skip: skipTs }, () => {
+  const missing = metrics.isMissingTableError;
+  assert.equal(missing(`Supabase 404: {"code":"PGRST205","message":"Could not find the table 'ml_dashboards.devolucoes' in the schema cache"}`), true);
+  assert.equal(missing(`Supabase 404: {"code":"42P01","message":"relation \"ml_dashboards.devolucoes\" does not exist"}`), true);
+  // Caso real de 08/10: banco com devoluções, mas sem as colunas da fila.
+  assert.equal(missing(`Supabase 400: {"code":"42703","message":"column devolucoes.sku does not exist"}`), false);
+  assert.equal(missing("Supabase 500: falha simulada"), false);
+});
+
 test("migração de devoluções só cria objetos e não guarda dados pessoais", async () => {
   const sql = await readFile(new URL("supabase/migrations/2026-10-05_devolucoes.sql", root), "utf8");
   const code = sql.replace(/--.*$/gm, "");
@@ -299,6 +313,9 @@ test("seção Devoluções entra no menu sem alterar as demais e mantém regras 
   assert.match(server, /const mode = resolveDemoMode\(process\.env\);/);
   assert.match(server, /shouldShowDemo\(mode, real\.status\) \? buildDemoReturnsPayload\(window\) : real/);
   assert.doesNotMatch(server, /SUPABASE_SERVICE_ROLE_KEY|NEXT_PUBLIC_/);
+  // Lê com select=* para não quebrar quando colunas opcionais ainda não existem no banco.
+  assert.match(server, /const DEVOLUCOES_SELECT = "\*";/);
+  assert.match(server, /select: DEVOLUCOES_SELECT,/);
   assert.match(view, /Aguardando dados de devoluções/);
   assert.match(view, /Aguardando classificação dos motivos/);
   assert.doesNotMatch(view, /\bmi\b|\bmil\b/);

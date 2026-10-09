@@ -97,6 +97,17 @@ export function resolveDemoMode(env: Record<string, string | undefined>): Return
  */
 const STATUSES_WITHOUT_REAL_DATA: readonly ReturnsDataStatus[] = ["tables_missing", "empty", "not_configured"];
 
+/**
+ * Erro do Supabase que significa "a TABELA ou VIEW ainda não existe"
+ * (migração não aplicada). Só esse caso pode ligar a demonstração no site
+ * oficial. Coluna inexistente (código 42703) ou qualquer outra falha NÃO
+ * entra: com dados reais no banco, um erro nunca pode virar dado fictício.
+ */
+export function isMissingTableError(message: string): boolean {
+  if (/\b42703\b|column\s+\S+\s+does not exist/i.test(message)) return false;
+  return /PGRST205|\b42P01\b|Could not find the table|relation\s+\S+\s+does not exist/i.test(message);
+}
+
 export function shouldShowDemo(mode: ReturnsDemoMode, realStatus: ReturnsDataStatus | null): boolean {
   if (mode === "forced") return true;
   if (mode === "off" || realStatus === null) return false;
@@ -185,15 +196,17 @@ export type QueueRow = {
   priority: 0 | 1 | 2 | 3;
 };
 
-export type ReturnStatusGroup = { label: string; count: number; saleAmount: number };
+/** saleAmount null = nenhum caso do grupo tem valor de venda informado. */
+export type ReturnStatusGroup = { label: string; count: number; saleAmount: number | null };
 
 export type TrackingSummary = {
   openCount: number;
-  openSaleAmount: number;
+  /** null quando a ingestão ainda não informa o valor de venda (nunca R$ 0,00 falso). */
+  openSaleAmount: number | null;
   deadlineDueCount: number;
   awaitingActionCount: number;
   stalledCount: number;
-  stalledSaleAmount: number;
+  stalledSaleAmount: number | null;
   byReturnStatus: ReturnStatusGroup[];
   /** Fila em ordem de prioridade, como na planilha. */
   rows: QueueRow[];
@@ -280,15 +293,17 @@ export function buildTracking(
     .map((record) => buildQueueRow(record, today, rules, reasons))
     .sort(compareQueueRows);
 
-  const saleAmount = (items: QueueRow[]) => items.reduce((total, row) => total + (row.record.saleAmount ?? 0), 0);
+  const saleAmount = (items: QueueRow[]) => (items.some((row) => row.record.saleAmount !== null)
+    ? items.reduce((total, row) => total + (row.record.saleAmount ?? 0), 0)
+    : null);
   const stalledRows = rows.filter((row) => row.stalled);
   const groups = new Map<string, ReturnStatusGroup>();
   for (const row of rows) {
     const label = row.record.returnStatusText
       ?? (row.record.stage ? RETURN_STAGE_LABELS[row.record.stage] : "Status não informado");
-    const group = groups.get(label) ?? { label, count: 0, saleAmount: 0 };
+    const group = groups.get(label) ?? { label, count: 0, saleAmount: null };
     group.count += 1;
-    group.saleAmount += row.record.saleAmount ?? 0;
+    if (row.record.saleAmount !== null) group.saleAmount = (group.saleAmount ?? 0) + row.record.saleAmount;
     groups.set(label, group);
   }
 

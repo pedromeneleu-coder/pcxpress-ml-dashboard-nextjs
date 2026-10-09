@@ -248,6 +248,10 @@ function formatOptionalCurrency(value: number | null) {
   return value === null ? "—" : formatCurrency(value);
 }
 
+function saleAmountText(value: number | null) {
+  return value === null ? "Valor de venda ainda não informado" : `Valor de venda: ${formatCurrency(value)}`;
+}
+
 function claimStatusLabel(value: string | null) {
   const status = value?.trim().toLowerCase();
   if (status === "opened" || status === "aberta") return "Aberta";
@@ -465,7 +469,7 @@ function TrackingView({ payload, filters }: { payload: ReturnsPayload; filters: 
         <ReturnsKpi
           label="Casos abertos na fila"
           value={formatNumber(tracking.openCount)}
-          detail={`Valor de venda: ${formatCurrency(tracking.openSaleAmount)}`}
+          detail={saleAmountText(tracking.openSaleAmount)}
           icon={Undo2}
           tone="brand"
         />
@@ -485,7 +489,7 @@ function TrackingView({ payload, filters }: { payload: ReturnsPayload; filters: 
         <ReturnsKpi
           label="Parados"
           value={formatNumber(tracking.stalledCount)}
-          detail={`Valor de venda: ${formatCurrency(tracking.stalledSaleAmount)} · ${stalledRule}.`}
+          detail={`${saleAmountText(tracking.stalledSaleAmount)} · ${stalledRule}.`}
           icon={CirclePause}
           tone={tracking.stalledCount ? "warning" : "neutral"}
         />
@@ -499,7 +503,7 @@ function TrackingView({ payload, filters }: { payload: ReturnsPayload; filters: 
               <li key={group.label}>
                 <span>{group.label}</span>
                 <strong>{formatNumber(group.count)}</strong>
-                <small>{formatCurrency(group.saleAmount)}</small>
+                <small>{group.saleAmount === null ? "Valor não informado" : formatCurrency(group.saleAmount)}</small>
               </li>
             ))}
           </ul>
