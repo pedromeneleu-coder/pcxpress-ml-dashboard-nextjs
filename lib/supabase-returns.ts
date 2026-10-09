@@ -1,5 +1,5 @@
 import { INCLUDE_PNR, RETURN_STATUS_TO_STAGE } from "@/app/returns/returns-config";
-import { emptyReturnsPayload, resolveDemoMode, resolveStage, shouldShowDemo } from "@/app/returns/returns-metrics";
+import { emptyReturnsPayload, isMissingTableError, resolveDemoMode, resolveStage, shouldShowDemo } from "@/app/returns/returns-metrics";
 import type {
   ReasonFamily,
   ReturnReason,
@@ -41,23 +41,25 @@ type DevolucaoRecord = {
   valor_devolvido: number | string | null;
   custo_frete_devolucao: number | string | null;
   logistic_type: string | null;
-  sku: string | null;
-  quantidade: number | string | null;
-  valor_venda: number | string | null;
-  valor_reembolsado: number | string | null;
-  comprador_apelido: string | null;
-  motivo_descricao: string | null;
-  etapa_ml: string | null;
-  status_reclamacao: string | null;
-  status_retorno: string | null;
-  descricao_status: string | null;
-  data_prevista: string | null;
-  destino_retorno: string | null;
-  rastreio: string | null;
-  prazo_acao_vendedor: string | null;
-  acao_pendente: string | null;
-  resultado: string | null;
-  synced_at: string | null;
+  // Colunas da fila (2026-10-08_devolucoes_fila.sql). Opcionais: o painel
+  // funciona com ou sem essa migração; ausentes viram "—" na tela.
+  sku?: string | null;
+  quantidade?: number | string | null;
+  valor_venda?: number | string | null;
+  valor_reembolsado?: number | string | null;
+  comprador_apelido?: string | null;
+  motivo_descricao?: string | null;
+  etapa_ml?: string | null;
+  status_reclamacao?: string | null;
+  status_retorno?: string | null;
+  descricao_status?: string | null;
+  data_prevista?: string | null;
+  destino_retorno?: string | null;
+  rastreio?: string | null;
+  prazo_acao_vendedor?: string | null;
+  acao_pendente?: string | null;
+  resultado?: string | null;
+  synced_at?: string | null;
 };
 
 type DevolucaoStatusRecord = {
@@ -82,45 +84,11 @@ type BaseVendasRecord = {
   faturamento_pago: number | string | null;
 };
 
-const DEVOLUCOES_COLUMNS = [
-  "claim_id",
-  "return_id",
-  "order_id",
-  "mlb_id",
-  "titulo_anuncio",
-  "familia_motivo",
-  "reason_id",
-  "status_atual",
-  "etapa_atual",
-  "data_venda",
-  "data_abertura",
-  "data_envio_comprador",
-  "data_recebimento",
-  "data_reembolso",
-  "ultima_atualizacao",
-  "unidades_devolvidas",
-  "valor_devolvido",
-  "custo_frete_devolucao",
-  "logistic_type",
-  // Colunas da fila (migração 2026-10-08_devolucoes_fila.sql).
-  "sku",
-  "quantidade",
-  "valor_venda",
-  "valor_reembolsado",
-  "comprador_apelido",
-  "motivo_descricao",
-  "etapa_ml",
-  "status_reclamacao",
-  "status_retorno",
-  "descricao_status",
-  "data_prevista",
-  "destino_retorno",
-  "rastreio",
-  "prazo_acao_vendedor",
-  "acao_pendente",
-  "resultado",
-  "synced_at",
-].join(",");
+// A leitura usa select=* de propósito: pedir uma coluna que ainda não existe
+// no banco faz o Supabase recusar a consulta inteira. Com "*", o painel lê o
+// que existir; colunas da fila ausentes ficam vazias. A tabela não tem nenhuma
+// coluna de dado pessoal além do apelido do comprador.
+const DEVOLUCOES_SELECT = "*";
 
 function family(value: string | null | undefined): ReasonFamily | null {
   const normalized = value?.trim().toUpperCase();
@@ -150,23 +118,23 @@ function toRecord(row: DevolucaoRecord): ReturnRecord {
     returnedAmount: toNullableNumber(row.valor_devolvido),
     returnShippingCost: toNullableNumber(row.custo_frete_devolucao),
     logisticType: row.logistic_type,
-    sku: row.sku,
-    quantity: toNullableNumber(row.quantidade),
-    saleAmount: toNullableNumber(row.valor_venda),
-    refundedAmount: toNullableNumber(row.valor_reembolsado),
-    buyerNickname: row.comprador_apelido,
-    reasonText: row.motivo_descricao,
-    caseType: row.etapa_ml,
-    claimStatus: row.status_reclamacao,
-    returnStatusText: row.status_retorno,
-    statusDescription: row.descricao_status,
-    expectedAt: row.data_prevista,
-    returnDestination: row.destino_retorno,
-    trackingNumber: row.rastreio,
-    sellerActionDueAt: row.prazo_acao_vendedor,
-    pendingAction: row.acao_pendente,
-    result: row.resultado,
-    syncedAt: row.synced_at,
+    sku: row.sku ?? null,
+    quantity: toNullableNumber(row.quantidade ?? null),
+    saleAmount: toNullableNumber(row.valor_venda ?? null),
+    refundedAmount: toNullableNumber(row.valor_reembolsado ?? null),
+    buyerNickname: row.comprador_apelido ?? null,
+    reasonText: row.motivo_descricao ?? null,
+    caseType: row.etapa_ml ?? null,
+    claimStatus: row.status_reclamacao ?? null,
+    returnStatusText: row.status_retorno ?? null,
+    statusDescription: row.descricao_status ?? null,
+    expectedAt: row.data_prevista ?? null,
+    returnDestination: row.destino_retorno ?? null,
+    trackingNumber: row.rastreio ?? null,
+    sellerActionDueAt: row.prazo_acao_vendedor ?? null,
+    pendingAction: row.acao_pendente ?? null,
+    result: row.resultado ?? null,
+    syncedAt: row.synced_at ?? null,
   };
 }
 
@@ -200,8 +168,7 @@ function toSalesDay(row: BaseVendasRecord): ReturnsSalesDay {
 
 /** Tabela/view inexistente no PostgREST: a migração ainda não foi aplicada. */
 function isMissingRelation(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /Supabase 404|PGRST205|42P01|does not exist/i.test(message);
+  return isMissingTableError(error instanceof Error ? error.message : String(error));
 }
 
 function salesPeriodFilter(window: ReturnsWindow): Record<string, string> {
@@ -243,7 +210,7 @@ async function getRealReturnsData(window: ReturnsWindow): Promise<ReturnsPayload
       devolucoes = await fetchAll<DevolucaoRecord>(
         config,
         appendQuery("devolucoes", {
-          select: DEVOLUCOES_COLUMNS,
+          select: DEVOLUCOES_SELECT,
           account_id: accountFilter,
           order: "data_abertura.desc.nullslast",
         }),
