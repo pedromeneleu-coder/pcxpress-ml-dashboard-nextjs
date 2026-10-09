@@ -94,7 +94,11 @@ function fakeHttp(mode, calls, posted, overrides = {}) {
         });
         return { data, paging: { total: data.length } };
       }
-      if ((match = path.match(/^\/post-purchase\/v1\/claims\/(C\d)$/))) { count('ml:claim_detail'); return { ...claims[match[1]], ...(claimDetail[match[1]] || {}) }; }
+      if ((match = path.match(/^\/post-purchase\/v1\/claims\/(C\d)$/))) {
+        count('ml:claim_detail');
+        if (overrides.failDetail) throw new Error('Request failed with status code 400');
+        return { ...claims[match[1]], ...(claimDetail[match[1]] || {}) };
+      }
       if ((match = path.match(/^\/post-purchase\/v2\/claims\/(C\d)\/returns$/))) { count('ml:returns'); return returns[match[1]]; }
       if ((match = path.match(/^\/post-purchase\/v1\/returns\/(R\d)\/reviews$/))) {
         count('ml:reviews');
@@ -120,6 +124,10 @@ function fakeHttp(mode, calls, posted, overrides = {}) {
         if (mode === 'sem_fila' && select.includes('sku')) {
           throw httpError(400, { code: '42703', message: 'column devolucoes.sku does not exist' });
         }
+        // Como o n8n às vezes entrega o erro: só a mensagem, sem código nem corpo.
+        if (mode === 'sem_fila_sem_corpo' && select.includes('sku')) {
+          throw new Error('Request failed with status code 400');
+        }
         return url.searchParams.get('offset') === '0' ? [storedC4] : [];
       }
       return [];
@@ -127,6 +135,16 @@ function fakeHttp(mode, calls, posted, overrides = {}) {
     if (options.method === 'POST') {
       if (table === 'sync_runs') return [{ id: 77 }];
       posted[table] = [...(posted[table] || []), ...(Array.isArray(options.body) ? options.body : [options.body])];
+      // Resposta completa (returnFullResponse): o corpo com o motivo chega ao workflow.
+      if (table === 'devolucoes' && mode === 'linha_recusada' && options.returnFullResponse) {
+        if (options.body.some((row) => row.claim_id === 'C3' && 'sku' in row)) {
+          return { statusCode: 400, headers: {}, body: { code: '23514', message: 'new row violates check constraint "devolucoes_fila_valores_validos"' } };
+        }
+        return { statusCode: 201, headers: {}, body: '' };
+      }
+      if (table === 'devolucoes' && mode === 'gravacao_recusada' && options.body.some((row) => 'sku' in row)) {
+        throw new Error('Request failed with status code 400');
+      }
       if (table === 'devolucoes' && mode === 'sem_fila' && options.body.some((row) => 'sku' in row)) {
         throw httpError(400, { code: 'PGRST204', message: "Could not find the 'sku' column of 'devolucoes'" });
       }
@@ -191,6 +209,44 @@ test("MVP7 sem a migração da fila grava só as colunas antigas", async () => {
   assert.equal(summary.returns_upserted, 5);
   for (const row of Object.values(rows)) assert.ok(!("sku" in row) && !("acao_pendente" in row));
   assert.equal(calls["ml:claim_detail"], undefined);
+});
+
+test("MVP7 sem fila também quando o 400 chega sem corpo", async () => {
+  const { summary, rows } = await runWorkflow("sem_fila_sem_corpo");
+  assert.equal(summary.status, "success", JSON.stringify(summary.error ?? summary.base_error_examples));
+  assert.equal(summary.colunas_fila_disponiveis, false);
+  assert.equal(summary.fila_erro.etapa, "leitura");
+  assert.equal(summary.fila_erro.statusCode, 400);
+  for (const row of Object.values(rows)) assert.ok(!("sku" in row));
+});
+
+test("MVP7 grava sem a fila e mostra o erro quando o Supabase recusa as colunas novas", async () => {
+  const { summary, rows } = await runWorkflow("gravacao_recusada");
+  assert.equal(summary.status, "success", JSON.stringify(summary.error ?? summary.base_error_examples));
+  assert.equal(summary.colunas_fila_disponiveis, false);
+  assert.equal(summary.fila_erro.etapa, "gravacao");
+  assert.equal(summary.returns_upserted, 6);
+  assert.ok(Object.values(rows).some((row) => !("sku" in row)), "regravou sem as colunas da fila");
+});
+
+test("MVP7 grava linha a linha e mostra o motivo quando uma linha da fila é recusada", async () => {
+  const { summary, rows } = await runWorkflow("linha_recusada");
+  assert.equal(summary.status, "success", JSON.stringify(summary.error ?? summary.base_error_examples));
+  assert.equal(summary.colunas_fila_disponiveis, true, "as demais linhas continuam com a fila");
+  assert.equal(summary.fila_linhas_recusadas, 1);
+  const [example] = summary.fila_exemplos_recusados;
+  assert.equal(example.claim_id, "C3");
+  assert.equal(example.erro.body.code, "23514");
+  assert.ok(!("comprador_apelido" in example.valores_fila), "exemplo sem o apelido do comprador");
+  assert.ok(!("sku" in rows.C3), "C3 gravada sem a fila");
+  for (const id of ["C1", "C2", "C4", "C5", "C6"]) assert.equal(typeof rows[id].sku, "string", id);
+});
+
+test("MVP7 segue quando o detalhe da reclamação responde 400", async () => {
+  const { summary, rows } = await runWorkflow("fila", { failDetail: true });
+  assert.equal(summary.status, "success", JSON.stringify(summary.base_error_examples));
+  assert.equal(summary.detail_restricted_or_unavailable, 1);
+  assert.equal(rows.C5.etapa_ml, "Mediação");
 });
 
 test("workflow MVP7 não guarda chaves", () => {
