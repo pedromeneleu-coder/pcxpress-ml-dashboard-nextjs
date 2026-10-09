@@ -135,6 +135,13 @@ function fakeHttp(mode, calls, posted, overrides = {}) {
     if (options.method === 'POST') {
       if (table === 'sync_runs') return [{ id: 77 }];
       posted[table] = [...(posted[table] || []), ...(Array.isArray(options.body) ? options.body : [options.body])];
+      // Resposta completa (returnFullResponse): o corpo com o motivo chega ao workflow.
+      if (table === 'devolucoes' && mode === 'linha_recusada' && options.returnFullResponse) {
+        if (options.body.some((row) => row.claim_id === 'C3' && 'sku' in row)) {
+          return { statusCode: 400, headers: {}, body: { code: '23514', message: 'new row violates check constraint "devolucoes_fila_valores_validos"' } };
+        }
+        return { statusCode: 201, headers: {}, body: '' };
+      }
       if (table === 'devolucoes' && mode === 'gravacao_recusada' && options.body.some((row) => 'sku' in row)) {
         throw new Error('Request failed with status code 400');
       }
@@ -220,6 +227,19 @@ test("MVP7 grava sem a fila e mostra o erro quando o Supabase recusa as colunas 
   assert.equal(summary.fila_erro.etapa, "gravacao");
   assert.equal(summary.returns_upserted, 6);
   assert.ok(Object.values(rows).some((row) => !("sku" in row)), "regravou sem as colunas da fila");
+});
+
+test("MVP7 grava linha a linha e mostra o motivo quando uma linha da fila é recusada", async () => {
+  const { summary, rows } = await runWorkflow("linha_recusada");
+  assert.equal(summary.status, "success", JSON.stringify(summary.error ?? summary.base_error_examples));
+  assert.equal(summary.colunas_fila_disponiveis, true, "as demais linhas continuam com a fila");
+  assert.equal(summary.fila_linhas_recusadas, 1);
+  const [example] = summary.fila_exemplos_recusados;
+  assert.equal(example.claim_id, "C3");
+  assert.equal(example.erro.body.code, "23514");
+  assert.ok(!("comprador_apelido" in example.valores_fila), "exemplo sem o apelido do comprador");
+  assert.ok(!("sku" in rows.C3), "C3 gravada sem a fila");
+  for (const id of ["C1", "C2", "C4", "C5", "C6"]) assert.equal(typeof rows[id].sku, "string", id);
 });
 
 test("MVP7 segue quando o detalhe da reclamação responde 400", async () => {
